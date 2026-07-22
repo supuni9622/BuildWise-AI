@@ -1,0 +1,1249 @@
+# BuildWise AI — Agent Catalog
+
+## 1. Purpose
+
+This document defines the complete agent set for BuildWise AI.
+
+Each agent has a distinct mission, responsibility boundary, structured input, structured output, model tier, tool policy, and handoff contract.
+
+BuildWise AI uses CrewAI Flows for orchestration and CrewAI Crews for specialist collaboration.
+
+The Flow controls:
+
+- execution order
+- routing
+- persistence
+- human-in-the-loop pauses
+- retries
+- cost limits
+- validation
+- specialist handoffs
+- refinement loops
+
+Agents do not directly control the API lifecycle, persistence, rate limiting, or unrestricted delegation.
+
+---
+
+## 2. Agent Design Principles
+
+1. Every agent must have a distinct business purpose.
+2. Agent responsibilities must not overlap unnecessarily.
+3. Each agent must receive structured inputs.
+4. Each agent must return a validated Pydantic output.
+5. Tool access must be agent-specific and allowlisted.
+6. Delegation must be controlled by the CrewAI Flow.
+7. Only one bounded refinement round is allowed.
+8. Strong reasoning models are reserved for high-value reasoning tasks.
+9. Current-market research must use approved tools and source validation.
+10. Assumptions must remain clearly separated from confirmed facts.
+
+---
+
+## 3. Agent Set Summary
+
+| Agent | Required or Conditional | Main Goal | Model Tier | Tool Access |
+|---|---|---|---|---|
+| Discovery Analyst | Required | Convert vague input into structured discovery context | Balanced | None |
+| Product Manager | Required | Define product strategy, MVP, priorities, and roadmap | Balanced | Optional validated market context |
+| Business Analyst | Required | Convert product strategy into buildable requirements | Balanced | None |
+| Market and GTM Strategist | Required | Provide market context, positioning, and GTM plan | Balanced | Approved web research |
+| Solution Architect | Required | Design feasible architecture and technical cost model | Strong or balanced-high | Official documentation search |
+| AI Architect | Conditional | Design AI capabilities, model strategy, evaluation, and AI cost controls | Strong or balanced-high | Official AI provider/framework docs |
+| Security Architect | Conditional | Design product and AI security controls | Balanced-high | Approved security references |
+| QA and Evaluation Architect | Conditional | Define software testing and AI evaluation strategy | Balanced | None by default |
+| Lead Reviewer | Required | Resolve conflicts, detect gaps, approve final content | Strongest reasoning model | None |
+
+---
+
+# 4. Required Agents
+
+## 4.1 Discovery Analyst
+
+### Mission
+
+Transform a vague product idea into a structured and reviewable discovery result.
+
+### Goal
+
+Identify what the user is trying to build, who it serves, what is known, what is assumed, and what remains unclear.
+
+### Core Capabilities
+
+- idea interpretation
+- domain classification
+- problem extraction
+- user identification
+- assumption generation
+- ambiguity detection
+- missing-information analysis
+- risk signal detection
+
+### Skills
+
+- product discovery
+- requirement discovery
+- business-context reasoning
+- ambiguity analysis
+- structured output generation
+- assumption management
+
+### Main Tasks
+
+- interpret the original idea
+- extract the main business problem
+- identify the product category
+- identify likely target users
+- extract known facts
+- generate explicit assumptions
+- identify missing information
+- flag sensitive or high-risk domains
+- produce discovery metadata for downstream agents
+
+### Input
+
+- original product idea
+- optional additional context
+- previous clarification answers
+- current clarification round
+- previous questions
+- session constraints
+
+### Output
+
+`DiscoveryResult`
+
+Recommended fields:
+
+- interpreted_idea
+- problem_statement
+- product_category
+- industry
+- target_users
+- known_facts
+- assumptions
+- unknowns
+- risks
+- confidence
+- clarification_recommended
+
+### Delegation From
+
+- CrewAI Flow
+
+### Delegation To
+
+The Flow passes its structured output to:
+
+- Completeness Evaluator
+- Clarification Question Generator
+- Preliminary Capability Classifier
+- Product Manager
+
+### Model Recommendation
+
+Balanced general-purpose reasoning model.
+
+The model should be capable of reliable structured output but does not need to be the most expensive model.
+
+### Tools
+
+None.
+
+### Forbidden Actions
+
+- market research
+- competitor analysis
+- architecture design
+- technology selection
+- final requirement creation
+- treating assumptions as confirmed facts
+
+---
+
+## 4.2 Product Manager
+
+### Mission
+
+Convert validated discovery context into a realistic product definition.
+
+### Goal
+
+Define what should be built, for whom, why it matters, what belongs in the MVP, and how delivery should be prioritized.
+
+### Core Capabilities
+
+- product vision
+- value proposition
+- persona definition
+- feature prioritization
+- MVP scoping
+- success metric design
+- product trade-off analysis
+- roadmap planning
+- scope-versus-timeline reasoning
+
+### Skills
+
+- product strategy
+- user-centered product design
+- prioritization frameworks
+- roadmap planning
+- outcome definition
+- product risk assessment
+
+### Main Tasks
+
+- define product vision
+- define value proposition
+- define target users
+- define user personas
+- define product goals
+- define success metrics
+- define MVP scope
+- define future scope
+- prioritize capabilities
+- identify explicit exclusions
+- define product milestones
+- identify business dependencies
+- state team and delivery assumptions
+- identify product-level risks
+
+### Input
+
+- validated DiscoveryResult
+- confirmed clarification answers
+- assumptions
+- optional early market context
+- user constraints
+- budget and timeline assumptions
+
+### Output
+
+`ProductDefinition`
+
+Recommended fields:
+
+- product_vision
+- value_proposition
+- target_users
+- personas
+- product_goals
+- success_metrics
+- mvp_scope
+- future_scope
+- prioritized_features
+- exclusions
+- roadmap
+- business_dependencies
+- delivery_assumptions
+- product_risks
+
+### Delegation From
+
+- CrewAI Flow
+- Discovery stage
+
+### Delegation To
+
+The Flow passes its output to:
+
+- Business Analyst
+- Specialist Planner
+- Market and GTM Strategist
+- Solution Architect
+- Lead Reviewer
+
+### Model Recommendation
+
+Balanced general-purpose reasoning model.
+
+### Tools
+
+None by default.
+
+May receive validated early-market context from the Market and GTM Strategist, but should not directly browse the web.
+
+### Forbidden Actions
+
+- technical architecture design
+- unsupported market claims
+- infrastructure selection
+- unnecessary MVP expansion
+- exact effort estimation without evidence
+
+---
+
+## 4.3 Business Analyst
+
+### Mission
+
+Translate the product definition into detailed, buildable, and testable requirements.
+
+### Goal
+
+Produce workflows, requirements, business rules, edge cases, and acceptance criteria that downstream technical specialists can use.
+
+### Core Capabilities
+
+- workflow analysis
+- functional requirement definition
+- non-functional requirement definition
+- business-rule extraction
+- user-story design
+- acceptance-criteria design
+- edge-case identification
+- integration requirement analysis
+- data requirement definition
+
+### Skills
+
+- requirement engineering
+- workflow modeling
+- business process analysis
+- acceptance testing
+- requirement traceability
+- structured documentation
+
+### Main Tasks
+
+- define user journeys
+- define functional requirements
+- define non-functional requirements
+- define business rules
+- create user stories
+- create acceptance criteria
+- identify edge cases
+- identify data requirements
+- identify integration requirements
+- identify operational constraints
+- identify requirement dependencies
+
+### Input
+
+- ProductDefinition
+- DiscoveryResult
+- confirmed user answers
+- constraints
+- early market context when available
+
+### Output
+
+`RequirementsSpecification`
+
+Recommended fields:
+
+- user_journeys
+- functional_requirements
+- non_functional_requirements
+- business_rules
+- user_stories
+- acceptance_criteria
+- edge_cases
+- data_requirements
+- integration_requirements
+- operational_constraints
+- requirement_dependencies
+
+### Delegation From
+
+- Product Manager through the Flow
+
+### Delegation To
+
+The Flow passes its output to:
+
+- Specialist Planner
+- Solution Architect
+- AI Architect
+- Security Architect
+- QA and Evaluation Architect
+- Lead Reviewer
+
+### Model Recommendation
+
+Balanced general-purpose reasoning model.
+
+### Tools
+
+None.
+
+### Forbidden Actions
+
+- final technology selection
+- unsupported compliance statements
+- vague acceptance criteria
+- duplication of Product Manager content
+- architecture design
+
+---
+
+## 4.4 Market and GTM Strategist
+
+### Mission
+
+Ensure that the product reflects current market realities and has a practical go-to-market path.
+
+### Goal
+
+Provide source-backed market context, positioning, differentiation, launch strategy, and measurable GTM recommendations.
+
+### Core Capabilities
+
+- competitor discovery
+- market trend analysis
+- product positioning
+- differentiation analysis
+- market segmentation
+- ideal customer profile definition
+- messaging strategy
+- pricing-model recommendations
+- acquisition channel analysis
+- launch planning
+- adoption-risk analysis
+- GTM metric design
+
+### Skills
+
+- current market research
+- competitive analysis
+- positioning
+- GTM planning
+- evidence synthesis
+- source quality assessment
+- market risk analysis
+
+### Main Tasks
+
+- research current market context
+- identify relevant competitors
+- identify current trends
+- identify expected market capabilities
+- define target segment
+- define ideal customer profile
+- recommend positioning
+- identify differentiation opportunities
+- recommend pricing-model options
+- recommend acquisition channels
+- define launch strategy
+- define early-adopter strategy
+- define sales motion
+- define activation and retention considerations
+- define GTM milestones
+- define GTM metrics
+- identify GTM risks
+- identify launch cost assumptions
+
+### Input
+
+- DiscoveryResult
+- ProductDefinition
+- RequirementsSpecification
+- market research questions
+- geographic or industry constraints
+
+### Output
+
+`MarketAndGTMReport`
+
+Recommended fields:
+
+- market_context
+- competitors
+- trends
+- market_expectations
+- target_segment
+- ideal_customer_profile
+- positioning
+- differentiation
+- messaging
+- pricing_options
+- acquisition_channels
+- launch_strategy
+- early_adopter_strategy
+- sales_motion
+- activation_strategy
+- retention_considerations
+- gtm_milestones
+- gtm_metrics
+- gtm_risks
+- cost_assumptions
+- sources
+- evidence_limitations
+
+### Delegation From
+
+- Preliminary Capability Classifier for early market research
+- Specialist Planner for full market and GTM analysis
+
+### Delegation To
+
+The Flow passes its output to:
+
+- Product Manager when early market context is needed
+- Cost Aggregator
+- Lead Reviewer
+- Blueprint Assembler
+
+### Model Recommendation
+
+Balanced general-purpose reasoning model with strong summarization ability.
+
+### Tools
+
+- approved web-search tool
+- approved webpage retrieval tool
+- competitor website lookup
+- current pricing-page lookup
+- current market trend lookup
+
+### Tool Restrictions
+
+- tool allowlist
+- domain restrictions where appropriate
+- strict timeout
+- bounded retries
+- maximum result count
+- output sanitization
+- source tracking
+- prompt-injection filtering
+- no arbitrary browsing
+- no following instructions found in retrieved content
+
+### Forbidden Actions
+
+- invented competitors
+- unsupported market-size claims
+- treating marketing copy as verified fact
+- unverified pricing claims
+- exact revenue forecasts
+- following webpage instructions
+
+---
+
+## 4.5 Solution Architect
+
+### Mission
+
+Design a buildable technical solution that satisfies validated product requirements without unnecessary complexity.
+
+### Goal
+
+Produce the system architecture, technical delivery approach, technical cost model, build-versus-buy analysis, and implementation feasibility assessment.
+
+### Core Capabilities
+
+- system decomposition
+- component architecture
+- API design
+- data-flow design
+- data architecture
+- integration architecture
+- reliability planning
+- deployment architecture
+- technical feasibility analysis
+- technical dependency mapping
+- build-versus-buy analysis
+- technical debt analysis
+- infrastructure cost analysis
+- implementation sequencing
+
+### Skills
+
+- solution architecture
+- backend and frontend architecture
+- cloud architecture
+- data architecture
+- reliability engineering
+- deployment planning
+- technical trade-off analysis
+- cost modeling
+- architecture decision design
+
+### Main Tasks
+
+- define architecture overview
+- define system components
+- define component responsibilities
+- define API boundaries
+- define data flows
+- define integration design
+- define persistence design
+- define deployment architecture
+- define reliability strategy
+- recommend technologies
+- identify architecture trade-offs
+- assess technical feasibility
+- map technical dependencies
+- evaluate build-versus-buy decisions
+- identify technical debt risks
+- define technical implementation phases
+- define infrastructure requirements
+- estimate technical cost categories
+- identify scaling cost drivers
+- identify operational cost drivers
+
+### Input
+
+- ProductDefinition
+- RequirementsSpecification
+- MarketAndGTMReport when relevant
+- AIArchitecture when available
+- security constraints
+- scale assumptions
+- budget assumptions
+
+### Output
+
+`SolutionArchitecture`
+
+Recommended fields:
+
+- architecture_overview
+- components
+- component_responsibilities
+- api_boundaries
+- data_flows
+- integrations
+- persistence_design
+- deployment_architecture
+- reliability_strategy
+- technology_recommendations
+- tradeoffs
+- feasibility_assessment
+- technical_dependencies
+- build_vs_buy_decisions
+- technical_debt_risks
+- implementation_phases
+- infrastructure_requirements
+- technical_cost_estimate
+- scaling_cost_drivers
+- operational_cost_drivers
+- architecture_decisions
+
+### Delegation From
+
+- Specialist Planner
+
+### Delegation To
+
+The Flow passes its output to:
+
+- AI Architect
+- Security Architect
+- QA and Evaluation Architect
+- Cost Aggregator
+- Lead Reviewer
+
+### Model Recommendation
+
+Balanced-high reasoning model.
+
+A stronger model may be selected for high-complexity architecture tasks.
+
+### Tools
+
+- official technical documentation search
+- approved cloud documentation lookup
+- approved framework documentation lookup
+- approved pricing lookup when required for current cost estimates
+
+### Forbidden Actions
+
+- adding microservices without justification
+- adding Kubernetes without need
+- selecting AI patterns without AI Architect context
+- producing unsupported cost precision
+- architecture unrelated to requirements
+- declaring exact delivery schedules without team data
+
+---
+
+# 5. Conditional Agents
+
+## 5.1 AI Architect
+
+### Invocation Conditions
+
+Run when:
+
+- AI is a core capability
+- AI may create meaningful value
+- RAG is being considered
+- agents are being considered
+- model selection is required
+- AI-generated output affects users
+- deterministic versus AI boundaries require analysis
+
+### Mission
+
+Determine where AI adds real value and design a safe, measurable, cost-aware AI architecture.
+
+### Goal
+
+Produce a practical AI design with model strategy, structured outputs, evaluation, fallback behavior, guardrails, tool controls, and AI cost analysis.
+
+### Core Capabilities
+
+- AI suitability assessment
+- LLM use-case design
+- deterministic versus AI boundary design
+- RAG design
+- agent workflow design
+- model strategy
+- prompt design
+- structured output design
+- tool-use design
+- AI evaluation design
+- fallback planning
+- AI cost optimization
+- AI observability planning
+
+### Main Tasks
+
+- assess AI suitability
+- identify AI use cases
+- define deterministic versus AI boundaries
+- define model requirements
+- define RAG strategy when required
+- define agent architecture when required
+- define prompt strategy
+- define tool strategy
+- define structured output strategy
+- define AI guardrails
+- define evaluation requirements
+- define fallback behavior
+- define human review points
+- estimate AI cost categories
+- define cost optimization strategies
+- identify AI risks
+
+### Input
+
+- ProductDefinition
+- RequirementsSpecification
+- SolutionArchitecture
+- data characteristics
+- user workflows
+- security constraints
+- budget constraints
+
+### Output
+
+`AIArchitecture`
+
+Recommended fields:
+
+- suitability_assessment
+- ai_use_cases
+- deterministic_boundaries
+- model_requirements
+- model_strategy
+- rag_strategy
+- agent_strategy
+- prompt_strategy
+- tool_strategy
+- structured_output_strategy
+- guardrails
+- evaluation_requirements
+- fallback_strategy
+- human_review_points
+- ai_cost_estimate
+- cost_controls
+- ai_risks
+- observability_requirements
+
+### Delegation From
+
+- Specialist Planner
+
+### Delegation To
+
+The Flow passes its output to:
+
+- Security Architect
+- QA and Evaluation Architect
+- Solution Architect for reconciliation
+- Cost Aggregator
+- Lead Reviewer
+
+### Model Recommendation
+
+Balanced-high reasoning model.
+
+Use a stronger model for complex RAG, agent, or model-routing architecture.
+
+### Tools
+
+- official model-provider documentation
+- official CrewAI documentation
+- official AI framework documentation
+- approved current pricing lookup
+
+### Forbidden Actions
+
+- adding AI to every feature
+- recommending agents when deterministic workflows are sufficient
+- omitting evaluation
+- omitting fallback behavior
+- assuming model capabilities without evidence
+- exposing hidden reasoning
+- unsupported cost precision
+
+---
+
+## 5.2 Security Architect
+
+### Invocation Conditions
+
+Run when:
+
+- sensitive data is processed
+- regulated workflows exist
+- autonomous actions exist
+- external integrations exist
+- high-impact decisions exist
+- AI tools can trigger actions
+- abuse risks are significant
+
+### Mission
+
+Identify realistic product-security and AI-security risks and design proportionate controls.
+
+### Goal
+
+Produce a threat model, trust boundaries, privacy considerations, tool restrictions, prompt-injection controls, and security testing requirements.
+
+### Core Capabilities
+
+- threat modeling
+- data classification
+- trust-boundary analysis
+- privacy analysis
+- prompt-injection analysis
+- indirect prompt-injection analysis
+- tool security
+- abuse-case analysis
+- secret handling
+- secure integration review
+- residual risk analysis
+
+### Main Tasks
+
+- define threat model
+- define trust boundaries
+- classify sensitive data
+- identify attack surfaces
+- define product security controls
+- define AI security controls
+- define prompt-injection defenses
+- define tool permission controls
+- define privacy considerations
+- define abuse scenarios
+- define security testing requirements
+- identify residual risks
+
+### Input
+
+- ProductDefinition
+- RequirementsSpecification
+- SolutionArchitecture
+- AIArchitecture
+- data flows
+- integration design
+- autonomous action design
+
+### Output
+
+`SecurityArchitecture`
+
+Recommended fields:
+
+- threat_model
+- trust_boundaries
+- sensitive_data_inventory
+- attack_surfaces
+- product_security_controls
+- ai_security_controls
+- prompt_injection_controls
+- tool_security_controls
+- privacy_considerations
+- abuse_scenarios
+- security_test_requirements
+- residual_risks
+
+### Delegation From
+
+- Specialist Planner
+
+### Delegation To
+
+The Flow passes its output to:
+
+- QA and Evaluation Architect
+- Cost Aggregator
+- Lead Reviewer
+
+### Model Recommendation
+
+Balanced-high reasoning model.
+
+### Tools
+
+- approved OWASP references
+- approved AI security references
+- official cloud security documentation
+- approved privacy and security documentation
+
+### Forbidden Actions
+
+- claiming compliance certification
+- giving legal advice
+- adding enterprise controls without risk justification
+- ignoring indirect prompt injection
+- treating every product as equally high risk
+
+---
+
+## 5.3 QA and Evaluation Architect
+
+### Invocation Conditions
+
+Run when:
+
+- AI outputs require evaluation
+- safety is important
+- user-impacting automation exists
+- complex integrations exist
+- acceptance criteria are extensive
+- reliability requirements are significant
+- adversarial testing is needed
+
+### Mission
+
+Define how deterministic software and probabilistic AI behavior will be tested and released safely.
+
+### Goal
+
+Produce a full test strategy, AI evaluation plan, quality metrics, failure tests, regression strategy, and release gates.
+
+### Core Capabilities
+
+- test strategy
+- acceptance planning
+- AI evaluation design
+- evaluation dataset planning
+- quality metric design
+- safety testing
+- adversarial testing
+- prompt-injection testing
+- tool-failure testing
+- regression planning
+- release gate design
+
+### Main Tasks
+
+- define test pyramid
+- define unit testing
+- define integration testing
+- define end-to-end testing
+- define contract testing
+- define AI evaluation dimensions
+- define evaluation datasets
+- define quality metrics
+- define safety tests
+- define prompt-injection tests
+- define tool-failure tests
+- define fallback tests
+- define regression strategy
+- define release gates
+- map tests to acceptance criteria
+
+### Input
+
+- RequirementsSpecification
+- SolutionArchitecture
+- AIArchitecture
+- SecurityArchitecture
+- acceptance criteria
+- known risks
+
+### Output
+
+`QAEvaluationPlan`
+
+Recommended fields:
+
+- test_strategy
+- unit_test_scope
+- integration_test_scope
+- end_to_end_test_scope
+- contract_test_scope
+- ai_evaluation_dimensions
+- evaluation_datasets
+- quality_metrics
+- safety_tests
+- prompt_injection_tests
+- tool_failure_tests
+- fallback_tests
+- regression_strategy
+- release_gates
+- acceptance_traceability
+
+### Delegation From
+
+- Specialist Planner
+
+### Delegation To
+
+The Flow passes its output to:
+
+- Cost Aggregator
+- Lead Reviewer
+
+### Model Recommendation
+
+Balanced general-purpose reasoning model.
+
+### Tools
+
+None by default.
+
+May receive approved testing documentation as context when needed.
+
+### Forbidden Actions
+
+- generic testing-only advice
+- treating AI evaluation as standard unit testing
+- ignoring adversarial tests
+- ignoring tool failures
+- defining metrics unrelated to user outcomes
+
+---
+
+# 6. Lead Reviewer
+
+## Mission
+
+Protect the final blueprint from contradictions, missing coverage, unsupported claims, unnecessary complexity, and unresolved specialist conflicts.
+
+## Goal
+
+Approve the blueprint, approve with limitations, or request one targeted specialist refinement.
+
+## Core Capabilities
+
+- cross-document consistency analysis
+- requirement traceability
+- architecture review
+- AI suitability review
+- security-gap analysis
+- GTM-gap analysis
+- cost-gap analysis
+- overengineering detection
+- conflict resolution
+- final synthesis
+- bounded refinement planning
+
+## Skills
+
+- deep reasoning
+- structured comparison
+- trade-off analysis
+- multi-document synthesis
+- conflict resolution
+- risk prioritization
+- architecture and product review
+
+## Main Tasks
+
+- compare all structured outputs
+- identify contradictions
+- identify missing requirements
+- identify unsupported assumptions
+- validate architecture-to-requirement alignment
+- validate AI suitability
+- validate AI evaluation coverage
+- validate security coverage
+- validate GTM coverage
+- validate cost coverage
+- identify overengineering
+- identify unrealistic recommendations
+- reconcile specialist conflicts
+- request targeted refinement
+- approve final content
+- record limitations and unresolved risks
+
+## Input
+
+- DiscoveryResult
+- ProductDefinition
+- RequirementsSpecification
+- MarketAndGTMReport
+- SolutionArchitecture
+- AIArchitecture when applicable
+- SecurityArchitecture when applicable
+- QAEvaluationPlan when applicable
+- CostSummary
+- validation results
+- partial specialist failures
+- session constraints
+
+## Output
+
+`LeadReview`
+
+Recommended fields:
+
+- approval_status
+- contradictions
+- missing_requirements
+- unsupported_assumptions
+- product_issues
+- architecture_issues
+- ai_issues
+- security_issues
+- gtm_issues
+- cost_issues
+- overengineering_findings
+- revision_requests
+- responsible_specialist
+- unresolved_risks
+- limitations
+- final_recommendation
+
+## Delegation From
+
+- CrewAI Flow after all required outputs are validated
+
+## Delegation To
+
+The Flow may route one targeted revision to:
+
+- Product Manager
+- Business Analyst
+- Market and GTM Strategist
+- Solution Architect
+- AI Architect
+- Security Architect
+- QA and Evaluation Architect
+
+The Lead Reviewer does not directly execute unrestricted delegation.
+
+## Model Recommendation
+
+Strongest reasoning model configured for the project.
+
+This model is used sparingly because the Lead Reviewer performs the highest-value reasoning task.
+
+## Tools
+
+None.
+
+The Lead Reviewer receives structured, validated specialist outputs rather than browsing independently.
+
+## Forbidden Actions
+
+- restarting the entire workflow
+- requesting more than one refinement round
+- silently rewriting major specialist outputs
+- inventing missing evidence
+- hiding incomplete analysis
+- performing mechanical Markdown rendering
+
+---
+
+# 7. Controlled Handoff Model
+
+BuildWise AI uses Flow-controlled handoffs.
+
+```text
+Discovery Analyst
+    ↓
+Completeness Evaluator
+    ↓
+Product Manager
+    ↓
+Business Analyst
+    ↓
+Specialist Planner
+    ↓
+Selected Specialists
+    ↓
+Cost Aggregator
+    ↓
+Lead Reviewer
+    ↓
+Targeted Specialist Refinement, if required
+    ↓
+Lead Reviewer Final Check
+    ↓
+Blueprint Assembler
+```
+
+Agents do not freely delegate work to each other.
+
+The CrewAI Flow:
+
+- validates every output
+- stores outputs in state
+- selects the next component
+- passes only required fields
+- enforces cost limits
+- records trace events
+- prevents circular handoffs
+
+---
+
+# 8. Model Tier Strategy
+
+| Tier | Purpose | Components |
+|---|---|---|
+| Tier 1 — Strong Reasoning | Conflict resolution, difficult architecture, final synthesis | Lead Reviewer, complex Solution Architect tasks, complex AI Architect tasks |
+| Tier 2 — Balanced | Most specialist reasoning | Discovery Analyst, Product Manager, Business Analyst, Market and GTM Strategist, Security Architect, QA Architect |
+| Tier 3 — Fast and Cheap | Routing, classification, repair, formatting assistance | Question generation, completeness evaluation, capability classification, targeted output repair |
+
+Recommended configuration pattern:
+
+```env
+LEAD_REVIEWER_MODEL=
+PRIMARY_AGENT_MODEL=
+ARCHITECT_MODEL=
+FAST_MODEL=
+```
+
+Exact model names must remain configurable.
+
+---
+
+# 9. Final Agent Set
+
+## Required
+
+- Discovery Analyst
+- Product Manager
+- Business Analyst
+- Market and GTM Strategist
+- Solution Architect
+- Lead Reviewer
+
+## Conditional
+
+- AI Architect
+- Security Architect
+- QA and Evaluation Architect
+
+## Removed
+
+- Engineering Lead
+
+Its responsibilities are redistributed as follows:
+
+| Former Engineering Lead Task | New Owner |
+|---|---|
+| Delivery planning | Product Manager |
+| Dependency mapping | Solution Architect |
+| Feasibility analysis | Solution Architect |
+| Technical debt analysis | Solution Architect |
+| Team-skill assumptions | Product Manager with architecture input |
+| Build-versus-buy analysis | Solution Architect |
+| Milestone planning | Product Manager |
