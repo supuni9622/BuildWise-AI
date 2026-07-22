@@ -14,6 +14,7 @@ BuildWise AI is a CrewAI-powered multi-agent consulting board that helps users c
 - Security Designs
 - Implementation Roadmaps
 
+![BuildWise AI -Full flow](<BuildWise AI -Full flow.drawio.png>)
 ---
 
 # Features
