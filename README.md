@@ -133,3 +133,7 @@ docker run -p 8000:8000 buildwise-ai
 - Demonstrate AI Engineering practices
 - Showcase agent orchestration
 - Generate real business value
+
+# Full architectural Flow
+
+![alt text](<AI consulting process flowchart.png>)
