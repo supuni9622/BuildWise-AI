@@ -116,10 +116,12 @@ uv run python --version
 uv sync
 uv lock
 cp .env.example .env
+
+
 uv run uvicorn buildwise.main:app \
   --reload \
   --host 0.0.0.0 \
-  --port 8000
+  --port 8080
 ```
 
 Check the API:

@@ -394,6 +394,7 @@ Pytest passes
 CrewAI can execute a minimal smoke-test Flow
 logs contain request correlation fields
 secrets are not logged
+
 Phase 1 — Domain Models and Agent Contracts
 
 Status: 🔵 Not Started
@@ -571,6 +572,7 @@ every agent has a distinct contract
 no agent has undefined or overlapping ownership
 the removed Engineering Lead role does not exist
 cost-related fields are distributed across Product, Architecture, AI, QA, Security, and GTM outputs
+
 Phase 2 — Discovery Flow
 
 Status: 🔵 Not Started
