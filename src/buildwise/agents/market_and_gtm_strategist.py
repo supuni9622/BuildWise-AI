@@ -62,8 +62,8 @@ def build_market_and_gtm_strategist_contract() -> AgentContract:
         invocation_mode=AgentInvocationMode.CONDITIONAL,
         capabilities=AgentCapabilityPolicy(
             tool_keys=[
-                "serper_search",
-                "website_scraper",
+                "web_search",
+                "web_scraper",
             ],
             mcp_server_keys=[],
             app_keys=[],

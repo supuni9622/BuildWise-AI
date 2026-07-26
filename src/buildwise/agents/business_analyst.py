@@ -159,9 +159,7 @@ def build_business_analyst_contract() -> AgentContract:
             skill_paths=[
                 "skills/business_analyst",
             ],
-            knowledge_paths=[
-                "knowledge/requirements",
-            ],
+            knowledge_paths=[],
         ),
         runtime=AgentRuntimeSettings(
             verbose=True,
