@@ -22,7 +22,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Protocol
 
-from crewai import Agent, LLM
+from crewai import LLM, Agent
 from crewai.tools import BaseTool
 
 from buildwise.agents.base import AgentContract
@@ -122,15 +122,11 @@ class AgentFactory:
         app_resolver: AppResolver | None = None,
     ) -> None:
         self._settings = settings or get_settings()
-        self._contract_registry = (
-            contract_registry or AGENT_CONTRACT_REGISTRY
-        )
+        self._contract_registry = contract_registry or AGENT_CONTRACT_REGISTRY
         self._tool_registry = tool_registry or TOOL_REGISTRY
 
         self._project_root = (
-            project_root.resolve()
-            if project_root is not None
-            else self._default_project_root()
+            project_root.resolve() if project_root is not None else self._default_project_root()
         )
 
         self._llm_factory = llm_factory or self._build_default_llm
@@ -195,9 +191,7 @@ class AgentFactory:
             "llm": llm,
             "tools": tools,
             "skills": skills,
-            "verbose": (
-                runtime.verbose and self._settings.crewai_verbose
-            ),
+            "verbose": (runtime.verbose and self._settings.crewai_verbose),
             "allow_delegation": runtime.allow_delegation,
             "max_iter": min(
                 runtime.max_iter,
@@ -205,17 +199,11 @@ class AgentFactory:
             ),
             "max_rpm": runtime.max_rpm,
             "reasoning": runtime.reasoning,
-            "max_reasoning_attempts": (
-                runtime.max_reasoning_attempts
-            ),
-            "respect_context_window": (
-                runtime.respect_context_window
-            ),
+            "max_reasoning_attempts": (runtime.max_reasoning_attempts),
+            "respect_context_window": (runtime.respect_context_window),
             "use_system_prompt": runtime.use_system_prompt,
             "cache": runtime.cache,
-            "max_execution_time": (
-                self._settings.max_execution_seconds
-            ),
+            "max_execution_time": (self._settings.max_execution_seconds),
         }
 
         if knowledge_sources:
@@ -251,17 +239,13 @@ class AgentFactory:
             seen.add(normalized_type)
             normalized_types.append(normalized_type)
 
-        return [
-            self.create(agent_type)
-            for agent_type in normalized_types
-        ]
+        return [self.create(agent_type) for agent_type in normalized_types]
 
     def create_required_agents(self) -> list[Agent]:
         """Create every enabled, always-required BuildWise agent."""
 
         return [
-            self.create_from_contract(contract)
-            for contract in self._contract_registry.required()
+            self.create_from_contract(contract) for contract in self._contract_registry.required()
         ]
 
     def resolve_model_name(
@@ -276,17 +260,14 @@ class AgentFactory:
             ModelTier.FAST: self._settings.fast_model,
             ModelTier.PRIMARY: self._settings.primary_agent_model,
             ModelTier.ARCHITECT: self._settings.architect_model,
-            ModelTier.LEAD_REVIEWER: (
-                self._settings.lead_reviewer_model
-            ),
+            ModelTier.LEAD_REVIEWER: (self._settings.lead_reviewer_model),
         }
 
         model_name = model_by_tier[normalized_tier].strip()
 
         if not model_name:
             raise AgentProviderConfigurationError(
-                f"No model is configured for tier "
-                f"'{normalized_tier.value}'."
+                f"No model is configured for tier '{normalized_tier.value}'."
             )
 
         return model_name
@@ -297,9 +278,7 @@ class AgentFactory:
     ) -> list[BaseTool]:
         """Resolve official CrewAI tools requested by an agent contract."""
 
-        return self._tool_registry.resolve_many(
-            contract.capabilities.tool_keys
-        )
+        return self._tool_registry.resolve_many(contract.capabilities.tool_keys)
 
     def _resolve_skills(
         self,
@@ -315,9 +294,7 @@ class AgentFactory:
         resolved_paths: list[str] = []
 
         for relative_path in contract.capabilities.skill_paths:
-            skill_directory = (
-                self._project_root / relative_path
-            ).resolve()
+            skill_directory = (self._project_root / relative_path).resolve()
 
             self._ensure_within_project_root(
                 path=skill_directory,
@@ -328,8 +305,7 @@ class AgentFactory:
 
             if not skill_directory.is_dir():
                 raise AgentSkillNotFoundError(
-                    f"Agent '{contract.key}' references missing Skill "
-                    f"directory '{relative_path}'."
+                    f"Agent '{contract.key}' references missing Skill directory '{relative_path}'."
                 )
 
             if not skill_file.is_file():
@@ -410,8 +386,7 @@ class AgentFactory:
             return
 
         raise AgentProviderConfigurationError(
-            "The configured BuildWise models require OpenAI, but "
-            "OPENAI_API_KEY is not configured."
+            "The configured BuildWise models require OpenAI, but OPENAI_API_KEY is not configured."
         )
 
     def _build_default_llm(
@@ -434,13 +409,10 @@ class AgentFactory:
         if model_name.startswith("openai/"):
             if settings.openai_api_key is None:
                 raise AgentProviderConfigurationError(
-                    "OPENAI_API_KEY is required for model "
-                    f"'{model_name}'."
+                    f"OPENAI_API_KEY is required for model '{model_name}'."
                 )
 
-            llm_kwargs["api_key"] = (
-                settings.openai_api_key.get_secret_value()
-            )
+            llm_kwargs["api_key"] = settings.openai_api_key.get_secret_value()
 
         return LLM(**llm_kwargs)
 
@@ -462,9 +434,14 @@ class AgentFactory:
 
     @staticmethod
     def _default_project_root() -> Path:
-        """Resolve the BuildWise repository root from this module location."""
+        """Resolve the buildwise package root from this module location.
 
-        return Path(__file__).resolve().parents[3]
+        Agent contract ``skill_paths`` are relative to ``src/buildwise``
+        (for example ``skills/business_analyst``), which is where the Skill
+        packages actually live.
+        """
+
+        return Path(__file__).resolve().parents[1]
 
 
 AGENT_FACTORY = AgentFactory()

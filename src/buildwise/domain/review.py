@@ -6,10 +6,11 @@ from buildwise.domain.common import (
     ConfidenceLevel,
     CostCategory,
     CostFrequency,
+)
+from buildwise.domain.enums import (
     ReviewDecision,
     RevisionTarget,
 )
-
 
 # =============================================================================
 # Review Findings

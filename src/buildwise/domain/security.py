@@ -8,10 +8,11 @@ from buildwise.domain.common import (
     ConfidenceLevel,
     CostCategory,
     CostFrequency,
+)
+from buildwise.domain.enums import (
     RiskLikelihood,
     RiskSeverity,
 )
-
 
 # =============================================================================
 # Authentication
@@ -144,7 +145,8 @@ class SecretManagementStrategy(BaseModel):
 
     encrypted_at_rest: bool = True
 
-    notes: str |None = None
+    notes: str | None = None
+
 
 # =============================================================================
 # Encryption
@@ -326,6 +328,7 @@ class SecureStorageStrategy(BaseModel):
 
     notes: str | None = None
 
+
 # =============================================================================
 # Threat Modeling
 # =============================================================================
@@ -474,6 +477,7 @@ class ThreatModel(BaseModel):
     )
 
     summary: str
+
 
 # =============================================================================
 # Security Controls
@@ -642,6 +646,7 @@ class ComplianceRequirement(BaseModel):
     )
 
     confidence: ConfidenceLevel = ConfidenceLevel.MEDIUM
+
 
 # =============================================================================
 # Security Risks
@@ -821,4 +826,3 @@ class SecurityArchitecture(BaseModel):
     overall_security_posture: ConfidenceLevel = ConfidenceLevel.MEDIUM
 
     notes: str | None = None
-

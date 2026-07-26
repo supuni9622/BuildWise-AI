@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import Field
 
-from buildwise.domain.common import BuildWiseBaseModel
+from buildwise.domain.common import BuildWiseModel
 from buildwise.domain.enums import (
     BudgetDecisionType,
     DependencyType,
@@ -14,16 +14,12 @@ from buildwise.domain.enums import (
 )
 
 
-class SpecialistRecommendation(BuildWiseBaseModel):
+class SpecialistRecommendation(BuildWiseModel):
     """Recommendation to include a specialist in the consulting process."""
 
-    specialist: SpecialistType = Field(
-        description="Specialist recommended for execution."
-    )
+    specialist: SpecialistType = Field(description="Specialist recommended for execution.")
 
-    required: bool = Field(
-        description="Whether the specialist is mandatory."
-    )
+    required: bool = Field(description="Whether the specialist is mandatory.")
 
     reason: SpecialistSelectionReason = Field(
         description="Primary reason for selecting this specialist."
@@ -39,20 +35,14 @@ class SpecialistRecommendation(BuildWiseBaseModel):
     )
 
 
-class SpecialistDependency(BuildWiseBaseModel):
+class SpecialistDependency(BuildWiseModel):
     """Execution dependency between two specialists."""
 
-    source: SpecialistType = Field(
-        description="Specialist producing the prerequisite output."
-    )
+    source: SpecialistType = Field(description="Specialist producing the prerequisite output.")
 
-    target: SpecialistType = Field(
-        description="Specialist depending on the prerequisite."
-    )
+    target: SpecialistType = Field(description="Specialist depending on the prerequisite.")
 
-    dependency: DependencyType = Field(
-        description="Nature of the dependency."
-    )
+    dependency: DependencyType = Field(description="Nature of the dependency.")
 
     description: str = Field(
         min_length=10,
@@ -60,17 +50,12 @@ class SpecialistDependency(BuildWiseBaseModel):
     )
 
 
-class SpecialistExecutionGroup(BuildWiseBaseModel):
+class SpecialistExecutionGroup(BuildWiseModel):
     """A group of specialists that can execute together."""
 
-    name: str = Field(
-        min_length=3,
-        description="Execution group name."
-    )
+    name: str = Field(min_length=3, description="Execution group name.")
 
-    execution_mode: ExecutionMode = Field(
-        description="Sequential or parallel execution."
-    )
+    execution_mode: ExecutionMode = Field(description="Sequential or parallel execution.")
 
     specialists: list[SpecialistType] = Field(
         default_factory=list,
@@ -83,12 +68,10 @@ class SpecialistExecutionGroup(BuildWiseBaseModel):
     )
 
 
-class BudgetDecision(BuildWiseBaseModel):
+class BudgetDecision(BuildWiseModel):
     """Budget-aware planning decision."""
 
-    decision: BudgetDecisionType = Field(
-        description="Planner decision."
-    )
+    decision: BudgetDecisionType = Field(description="Planner decision.")
 
     explanation: str = Field(
         min_length=10,
@@ -106,7 +89,7 @@ class BudgetDecision(BuildWiseBaseModel):
     )
 
 
-class SpecialistExecutionPlan(BuildWiseBaseModel):
+class SpecialistExecutionPlan(BuildWiseModel):
     """Complete execution plan produced by the Specialist Planner."""
 
     recommendations: list[SpecialistRecommendation] = Field(
@@ -124,9 +107,7 @@ class SpecialistExecutionPlan(BuildWiseBaseModel):
         description="Execution dependencies.",
     )
 
-    budget: BudgetDecision = Field(
-        description="Budget-aware execution decision."
-    )
+    budget: BudgetDecision = Field(description="Budget-aware execution decision.")
 
     execution_summary: str = Field(
         min_length=20,

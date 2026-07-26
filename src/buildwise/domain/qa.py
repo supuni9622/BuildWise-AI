@@ -8,10 +8,11 @@ from buildwise.domain.common import (
     ConfidenceLevel,
     CostCategory,
     CostFrequency,
+)
+from buildwise.domain.enums import (
     RiskLikelihood,
     RiskSeverity,
 )
-
 
 # =============================================================================
 # Test Strategy
@@ -132,6 +133,7 @@ class AcceptanceTest(BaseModel):
     owner: str
 
     notes: str | None = None
+
 
 # =============================================================================
 # Evaluation Metrics
@@ -308,6 +310,7 @@ class QualityRisk(BaseModel):
 
     notes: str | None = None
 
+
 # =============================================================================
 # Release Gates
 # =============================================================================
@@ -436,8 +439,6 @@ class QAEvaluationPlan(BaseModel):
         default_factory=list,
     )
 
-    overall_quality_confidence: ConfidenceLevel = (
-        ConfidenceLevel.MEDIUM
-    )
+    overall_quality_confidence: ConfidenceLevel = ConfidenceLevel.MEDIUM
 
     notes: str | None = None
