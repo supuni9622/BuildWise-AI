@@ -337,3 +337,16 @@ class HandoffTarget(StrEnum):
     LEAD_REVIEWER = "lead_reviewer"
     BLUEPRINT_ASSEMBLER = "blueprint_assembler"
     SESSION_COMPLETION = "session_completion"
+
+class AgentType(StrEnum):
+    """Canonical BuildWise agent identifiers."""
+
+    PRODUCT_DISCOVERY_ANALYST = "product_discovery_analyst"
+    PRODUCT_MANAGER = "product_manager"
+    BUSINESS_ANALYST = "business_analyst"
+    MARKET_AND_GTM_STRATEGIST = "market_and_gtm_strategist"
+    SOLUTION_ARCHITECT = "solution_architect"
+    AI_ARCHITECT = "ai_architect"
+    SECURITY_ARCHITECT = "security_architect"
+    QA_AND_EVALUATION_ARCHITECT = "qa_and_evaluation_architect"
+    LEAD_REVIEWER = "lead_reviewer"

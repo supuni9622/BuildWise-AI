@@ -297,6 +297,18 @@ Follow PostgreSQL logs:
 docker compose logs -f postgres
 ```
 
+# Start / stop the app locally
+
+Start PostgreSQL and the API:
+```bash
+docker compose up -d postgres && uv run uvicorn buildwise.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+Stop the API and PostgreSQL:
+```bash
+pkill -f "uvicorn buildwise.main:app" && docker compose stop postgres
+```
+
 # Run with Docker
 API using local SQLite
 
@@ -431,3 +443,89 @@ GPT-5.6 Terra
 # Full architectural Flow
 
 ![alt text](<AI consulting process flowchart.png>)
+
+Locked architecture direction
+FastAPI
+   ↓
+API routers
+   ↓
+CrewAI Flow runtime
+   ↓
+Focused Crews
+   ↓
+Specialized Agents
+   ↓
+Tools / MCPs / Skills / Knowledge
+   ↓
+Structured Pydantic outputs
+   ↓
+Persistence / Reporting / API response
+
+# Core rules
+
+## Flows own orchestration
+state
+routing
+branching
+pause and resume
+human clarification
+execution order
+calling crews
+
+## Crews own focused units of reasoning
+discovery
+product definition
+requirements
+architecture
+specialist planning
+review
+
+## Agents remain specialists
+no generic “do everything” agent
+clear roles
+limited tools
+controlled delegation
+
+## Tasks use structured outputs
+output_pydantic
+task guardrails
+explicit expected outputs
+no fragile manual JSON parsing
+
+## FastAPI remains the transport layer
+accepts requests
+starts or resumes flows
+exposes status and results
+streams Flow events
+does not contain orchestration logic
+
+## PostgreSQL remains the business system of record
+sessions
+artifacts
+user clarification
+final blueprints
+execution metadata
+
+## CrewAI persistence is runtime persistence
+Flow state recovery
+resume/fork semantics
+human-in-the-loop continuation
+
+## Skills provide methodology
+product management procedures
+business analysis procedures
+architecture review methodology
+security and QA checklists
+
+## Knowledge provides reference material
+templates
+standards
+internal guidance
+reusable factual documents
+
+## Tools provide controlled actions
+web search
+web scraping
+GitHub search
+future MCP access
+persistence or document tools only when justified
