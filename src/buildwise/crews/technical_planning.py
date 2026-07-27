@@ -47,6 +47,8 @@ def create_technical_planning_crew(
     agent_factory: AgentFactory,
     settings: Settings,
     revision_requests: list[RevisionRequest] | None = None,
+    revision_specialists: set[SpecialistType] | None = None,
+    previous_result: TechnicalPlanningResult | None = None,
 ) -> Crew:
     """Build the Technical Planning Crew.
 
@@ -76,6 +78,10 @@ def create_technical_planning_crew(
 
     selected = _selected_specialists(specialist_plan)
     selected_technical = selected.intersection(_TECHNICAL_SPECIALISTS)
+    executing = selected_technical if revision_specialists is None else revision_specialists
+
+    if not executing or not executing.issubset(selected_technical):
+        raise ValueError("Revision specialists must be a non-empty subset of the selected plan.")
 
     if not selected_technical:
         raise ValueError(
@@ -83,18 +89,18 @@ def create_technical_planning_crew(
             "specialist for the Technical Planning Crew."
         )
 
-    include_solution = SpecialistType.SOLUTION_ARCHITECTURE in selected
-    include_ai = SpecialistType.AI_ARCHITECTURE in selected
-    include_security = SpecialistType.SECURITY_ARCHITECTURE in selected
-    include_qa = SpecialistType.QA_AND_EVALUATION in selected
+    include_solution = SpecialistType.SOLUTION_ARCHITECTURE in executing
+    include_ai = SpecialistType.AI_ARCHITECTURE in executing
+    include_security = SpecialistType.SECURITY_ARCHITECTURE in executing
+    include_qa = SpecialistType.QA_AND_EVALUATION in executing
 
-    if (include_ai or include_security or include_qa) and not include_solution:
-        raise ValueError(
-            "AI Architecture, Security Architecture, and QA & Evaluation "
-            "each depend on Solution Architecture inside this Crew; the "
-            "specialist plan must include SpecialistType.SOLUTION_ARCHITECTURE "
-            "whenever any of them are selected."
-        )
+    partial_without_context = (
+        (include_ai or include_security or include_qa)
+        and not include_solution
+        and previous_result is None
+    )
+    if partial_without_context:
+        raise ValueError("A partial technical revision requires the previous technical result.")
 
     agents: list[Agent] = []
     tasks: list[Task] = []
@@ -122,6 +128,11 @@ def create_technical_planning_crew(
             agent=ai_agent,
             requirements=requirements,
             solution_architecture_task=solution_task,
+            solution_architecture=(
+                previous_result.solution_architecture
+                if solution_task is None and previous_result
+                else None
+            ),
             revision_request=_find_revision(revision_requests, RevisionTarget.AI_ARCHITECTURE),
             guardrail_max_retries=settings.max_retries_per_operation,
         )
@@ -134,7 +145,17 @@ def create_technical_planning_crew(
             agent=security_agent,
             requirements=requirements,
             solution_architecture_task=solution_task,
+            solution_architecture=(
+                previous_result.solution_architecture
+                if solution_task is None and previous_result
+                else None
+            ),
             ai_architecture_task=ai_task,
+            ai_architecture=(
+                previous_result.ai_architecture
+                if ai_task is None and previous_result is not None
+                else None
+            ),
             revision_request=_find_revision(
                 revision_requests, RevisionTarget.SECURITY_ARCHITECTURE
             ),
@@ -149,8 +170,23 @@ def create_technical_planning_crew(
             agent=qa_agent,
             requirements=requirements,
             solution_architecture_task=solution_task,
+            solution_architecture=(
+                previous_result.solution_architecture
+                if solution_task is None and previous_result
+                else None
+            ),
             ai_architecture_task=ai_task,
+            ai_architecture=(
+                previous_result.ai_architecture
+                if ai_task is None and previous_result is not None
+                else None
+            ),
             security_architecture_task=security_task,
+            security_architecture=(
+                previous_result.security_architecture
+                if security_task is None and previous_result is not None
+                else None
+            ),
             revision_request=_find_revision(revision_requests, RevisionTarget.QA_AND_EVALUATION),
             guardrail_max_retries=settings.max_retries_per_operation,
         )
@@ -209,6 +245,7 @@ def assemble_technical_planning_result(
     crew_output: CrewOutput,
     *,
     session_id: SessionId,
+    previous_result: TechnicalPlanningResult | None = None,
 ) -> TechnicalPlanningResult:
     """Assemble a ``TechnicalPlanningResult`` from a completed Crew run.
 
@@ -233,10 +270,10 @@ def assemble_technical_planning_result(
             missing, or a task produced an output of an unexpected type.
     """
 
-    solution_architecture: SolutionArchitecture | None = None
-    ai_architecture: AIArchitecture | None = None
-    security_architecture: SecurityArchitecture | None = None
-    qa_evaluation: QAEvaluationPlan | None = None
+    solution_architecture = previous_result.solution_architecture if previous_result else None
+    ai_architecture = previous_result.ai_architecture if previous_result else None
+    security_architecture = previous_result.security_architecture if previous_result else None
+    qa_evaluation = previous_result.qa_evaluation if previous_result else None
 
     for task_output in crew_output.tasks_output:
         output = task_output.pydantic

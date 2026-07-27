@@ -29,7 +29,6 @@ from buildwise.domain.common import WarningMessage, generate_uuid
 from buildwise.domain.discovery import DiscoveryResult
 from buildwise.domain.enums import (
     ReviewDecision,
-    RevisionTarget,
     SessionStage,
     SessionStatus,
     SpecialistType,
@@ -41,6 +40,11 @@ from buildwise.domain.session import SessionError
 from buildwise.domain.specialist_planning import SpecialistExecutionPlan
 from buildwise.domain.technical_planning import TechnicalPlanningResult
 from buildwise.domain.usage import UsageRecord
+from buildwise.flows.revisions import (
+    PRODUCT_REVISION_TARGETS,
+    TECHNICAL_REVISION_TARGETS,
+    route_targeted_revision,
+)
 from buildwise.flows.routing import (
     FlowRoute,
     apply_specialist_execution_plan,
@@ -55,18 +59,6 @@ from buildwise.planning.planner import SpecialistPlanner
 logger = structlog.get_logger(__name__)
 
 CrewFactory = Callable[..., Crew]
-
-_PRODUCT_REVISION_TARGETS = {
-    RevisionTarget.PRODUCT_DEFINITION,
-    RevisionTarget.REQUIREMENTS,
-    RevisionTarget.MARKET_AND_GTM,
-}
-_TECHNICAL_REVISION_TARGETS = {
-    RevisionTarget.SOLUTION_ARCHITECTURE,
-    RevisionTarget.AI_ARCHITECTURE,
-    RevisionTarget.SECURITY_ARCHITECTURE,
-    RevisionTarget.QA_AND_EVALUATION,
-}
 
 
 class _NullFlowPersistence(FlowPersistence):
@@ -349,14 +341,12 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
         requests = review.revision_requests
         if not requests:
             raise ValueError("A revision-required review must include revision requests.")
-        if self.state.revision_count >= self.state.limits.maximum_specialist_revisions:
-            return FlowRoute.FAIL_FLOW.value
-
-        targets = {request.target for request in requests}
-        unsupported = targets.difference(_PRODUCT_REVISION_TARGETS | _TECHNICAL_REVISION_TARGETS)
-        if unsupported:
-            formatted = ", ".join(sorted(target.value for target in unsupported))
-            raise ValueError(f"Unsupported revision targets: {formatted}.")
+        try:
+            revision_route = route_targeted_revision(state=self.state, requests=requests)
+        except ValueError as error:
+            if "maximum number" in str(error):
+                return FlowRoute.FAIL_FLOW.value
+            raise
 
         self.state.revision_count += 1
         self._transition(SessionStage.REFINEMENT, SessionStatus.PROCESSING)
@@ -365,10 +355,13 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
             session_id=str(self.state.session_id),
             revision=self.state.revision_count,
         )
-        if targets.intersection(_PRODUCT_REVISION_TARGETS):
+        if revision_route.product_targets:
             self._rerun_product_planning(requests)
-        elif targets.intersection(_TECHNICAL_REVISION_TARGETS):
-            self._rerun_technical_planning(requests)
+        elif revision_route.technical_targets:
+            self._rerun_technical_planning(
+                requests,
+                specialists=set(revision_route.technical_specialists),
+            )
         return FlowRoute.RUN_LEAD_REVIEW.value
 
     @listen(FlowRoute.ASSEMBLE_BLUEPRINT.value)
@@ -463,7 +456,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
             discovery_result=discovery,
             include_market_and_gtm=previous.market_and_gtm is not None,
             revision_requests=[
-                request for request in requests if request.target in _PRODUCT_REVISION_TARGETS
+                request for request in requests if request.target in PRODUCT_REVISION_TARGETS
             ],
             agent_factory=self._agent_factory,
             settings=self._settings,
@@ -486,7 +479,12 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
         apply_specialist_execution_plan(state=self.state, plan=plan)
         self._rerun_technical_planning(requests)
 
-    def _rerun_technical_planning(self, requests: list[RevisionRequest]) -> None:
+    def _rerun_technical_planning(
+        self,
+        requests: list[RevisionRequest],
+        *,
+        specialists: set[SpecialistType] | None = None,
+    ) -> None:
         product = self._require(
             self.state.product_planning_result,
             "product_planning_result",
@@ -495,15 +493,22 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
             self.state.specialist_execution_plan,
             "specialist_execution_plan",
         )
+        previous = self._require(
+            self.state.technical_planning_result,
+            "technical_planning_result",
+        )
+        specialists = specialists or set(self.state.selected_specialists)
         for execution in self.state.specialist_executions:
-            if execution.status == "completed":
+            if execution.status == "completed" and execution.specialist in specialists:
                 execution.prepare_revision()
-        self._mark_selected_specialists_running()
+        self._mark_selected_specialists_running(specialists=specialists)
         crew = self._technical_planning_crew_factory(
             requirements=product.requirements,
             specialist_plan=plan,
+            revision_specialists=specialists,
+            previous_result=previous,
             revision_requests=[
-                request for request in requests if request.target in _TECHNICAL_REVISION_TARGETS
+                request for request in requests if request.target in TECHNICAL_REVISION_TARGETS
             ],
             agent_factory=self._agent_factory,
             settings=self._settings,
@@ -511,6 +516,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
         result = assemble_technical_planning_result(
             self._kickoff(crew, stage="technical_revision"),
             session_id=self.state.session_id,
+            previous_result=previous,
         )
         self._complete_specialist_executions(result)
         self.state.set_technical_planning_result(result)
@@ -530,9 +536,15 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
             ),
         )
 
-    def _mark_selected_specialists_running(self) -> None:
+    def _mark_selected_specialists_running(
+        self,
+        *,
+        specialists: set[SpecialistType] | None = None,
+    ) -> None:
         for execution in self.state.specialist_executions:
-            if execution.status in {"pending", "failed"}:
+            if execution.status in {"pending", "failed"} and (
+                specialists is None or execution.specialist in specialists
+            ):
                 self.state.mark_specialist_running(specialist=execution.specialist)
 
     def _complete_specialist_executions(

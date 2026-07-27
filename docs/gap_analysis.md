@@ -42,7 +42,7 @@ Actor → Frontend → FastAPI validation → BuildWise CrewAI Flow
 | Cost Aggregator | 🟡 Partial | The Flow converts each Crew's `UsageMetrics` into a `UsageRecord`, accumulates prompt/completion/total tokens and agent executions in `UsageSummary`, and enforces `maximum_session_tokens`. Provider/model attribution, estimated cost, tool calls, retries, and execution duration are not yet populated |
 | Lead Review Crew | ✅ Built | `crews/lead_review.py` + `tasks/lead_review.py` |
 | approved → blueprint | 🟡 Partial | The live review router handles `APPROVED` and `APPROVED_WITH_LIMITATIONS`, verifies `approved_for_blueprint`, and invokes an injected `BlueprintBuilder`. The concrete deterministic builder/rendering implementation remains missing |
-| revisions → rerun affected planning Crew | ✅ Built | The Flow maps product targets to Product Planning and technical targets to Technical Planning, cascades product revisions through replanning and technical regeneration, retains revision history, and enforces `maximum_specialist_revisions` |
+| revisions → rerun affected planning Crew | ✅ Built | `flows/revisions.py` deterministically maps Product Definition, Requirements, and Market & GTM to the Product Planning Crew, and Solution, AI, Security, and QA revisions to the Technical Planning Crew. Technical revisions rerun only the target plus selected downstream dependants (Solution → selected AI/Security/QA; AI → selected Security/QA; Security → selected QA; QA only). The Flow retains revision history and enforces `state.limits.maximum_specialist_revisions`; no revision-planning Agent is used |
 | Output validation | 🟡 Partial | The Flow rejects missing/wrong structured Discovery and Lead Review outputs, aggregate assemblers validate Product/Technical Planning, and state setters enforce session ownership and specialist selection. The dedicated `validation/` package and a unified post-Crew validation service remain missing |
 | Deterministic Blueprint Generator | 🔴 Missing | `reporting/__init__.py` is empty. `ProductBlueprint`/`BlueprintSection` models exist (`domain/blueprint.py`) with no assembler |
 | Final Report / Frontend | 🔴 Missing | Depends on the blueprint generator above |
@@ -87,6 +87,27 @@ now retains the preferred aggregate results, specialist plan, full Lead
 Review, and revision history. Review routing consumes `LeadReview.decision`
 directly; the obsolete duplicate-boolean contract has been removed. The Flow
 constructor also accepts CrewAI's native `FlowPersistence` boundary.
+
+#### Targeted revision router — `src/buildwise/flows/revisions.py`
+
+Revision planning is a small deterministic module rather than another Agent.
+It maps product-output targets to the existing Product Planning Crew and
+technical-output targets to the existing Technical Planning Crew. For
+technical revisions it computes the dependency cascade against the specialists
+selected for the current Flow:
+
+- Solution revision → Solution plus selected AI, Security, and QA
+- AI revision → AI plus selected Security and QA
+- Security revision → Security plus selected QA
+- QA revision → QA only
+
+Partial Technical Planning Crew runs reuse unchanged upstream artifacts and
+merge their revised outputs back into the existing `TechnicalPlanningResult`.
+Unsupported targets and technical targets not selected for the Flow are
+rejected deterministically. Before a revision starts, the router checks
+`state.revision_count` against
+`state.limits.maximum_specialist_revisions`; exhaustion routes the Flow to
+failure.
 
 ### 3. ✅ Done — Minimal persistence — `src/buildwise/persistence/`
 Implemented the five MVP tables: `consultations`, `artifacts`,
