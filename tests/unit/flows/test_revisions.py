@@ -76,6 +76,17 @@ def test_product_target_routes_to_product_planning() -> None:
     assert route.technical_specialists == ()
 
 
+def test_cost_summary_revision_rebuilds_without_another_crew() -> None:
+    route = route_targeted_revision(
+        state=_state(SpecialistType.SOLUTION_ARCHITECTURE),
+        requests=[_request(RevisionTarget.COST_SUMMARY)],
+    )
+
+    assert route.crews == set()
+    assert route.rebuild_cost_summary is True
+    assert route.technical_specialists == ()
+
+
 def test_revision_limit_is_enforced() -> None:
     with pytest.raises(ValueError, match="maximum number"):
         route_targeted_revision(

@@ -13,6 +13,7 @@ from crewai import Agent, Task
 
 from buildwise.domain.ai_architecture import AIArchitecture
 from buildwise.domain.architecture import SolutionArchitecture
+from buildwise.domain.costs import CostSummary
 from buildwise.domain.discovery import DiscoveryResult
 from buildwise.domain.market_and_gtm import MarketAndGTMStrategy
 from buildwise.domain.product import ProductDefinition
@@ -37,6 +38,7 @@ def create_lead_review_task(
     product_definition: ProductDefinition,
     requirements: RequirementsSpecification,
     specialist_plan: SpecialistExecutionPlan,
+    cost_summary: CostSummary,
     market_and_gtm: MarketAndGTMStrategy | None = None,
     solution_architecture: SolutionArchitecture | None = None,
     ai_architecture: AIArchitecture | None = None,
@@ -58,6 +60,7 @@ def create_lead_review_task(
         product_definition: The approved ProductDefinition.
         requirements: The approved RequirementsSpecification.
         specialist_plan: The specialist selection and execution plan.
+        cost_summary: Deterministic normalized project costs and totals.
         market_and_gtm: The completed MarketAndGTMStrategy, when selected.
         solution_architecture: The completed SolutionArchitecture, when
             selected.
@@ -85,6 +88,7 @@ def create_lead_review_task(
         f"ProductDefinition: {product_definition.model_dump_json()}",
         f"RequirementsSpecification: {requirements.model_dump_json()}",
         f"SpecialistExecutionPlan: {specialist_plan.model_dump_json()}",
+        f"CostSummary: {cost_summary.model_dump_json()}",
     ]
 
     optional_artifacts = {
@@ -138,7 +142,8 @@ def create_lead_review_task(
         "SpecialistExecutionPlan.\n"
         "- Review architectural, AI, security, and QA feasibility for every "
         "selected artifact.\n"
-        "- Review risks and cost consistency across artifacts.\n"
+        "- Review risks and the supplied CostSummary for consistency, "
+        "coverage, frequency, currency, and assumptions.\n"
         "- Assess implementation readiness and assign an "
         "implementation_readiness_score.\n"
         "- Produce findings, consistency checks, and any bounded revision "

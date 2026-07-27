@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from buildwise.application.cost_aggregator import aggregate_project_costs
 from buildwise.domain.architecture import SolutionArchitecture
 from buildwise.domain.enums import SpecialistType
 from buildwise.domain.product import ProductDefinition
@@ -19,7 +20,20 @@ def validate_output(state: BuildWiseFlowState) -> None:
     product = _require(state.product_planning_result, "product_planning_result")
     plan = _require(state.specialist_execution_plan, "specialist_execution_plan")
     technical = _require(state.technical_planning_result, "technical_planning_result")
+    cost_summary = _require(state.cost_summary, "cost_summary")
     review = _require(state.lead_review, "lead_review")
+
+    if cost_summary.session_id != state.session_id:
+        raise ValueError("cost_summary.session_id must match Flow session_id.")
+    expected_costs = aggregate_project_costs(
+        product_planning=product,
+        technical_planning=technical,
+    )
+    if (
+        cost_summary.estimates != expected_costs.estimates
+        or cost_summary.totals != expected_costs.totals
+    ):
+        raise ValueError("CostSummary is stale or inconsistent with planning artifacts.")
 
     session_artifacts = {
         "discovery_result": discovery,
@@ -29,8 +43,6 @@ def validate_output(state: BuildWiseFlowState) -> None:
         "technical_planning_result": technical,
         "solution_architecture": technical.solution_architecture,
         "ai_architecture": technical.ai_architecture,
-        "security_architecture": technical.security_architecture,
-        "qa_evaluation": technical.qa_evaluation,
     }
     for name, artifact in session_artifacts.items():
         if artifact is not None and artifact.session_id != state.session_id:

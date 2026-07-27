@@ -41,7 +41,7 @@ Actor → Frontend → FastAPI validation → BuildWise CrewAI Flow
 | Product Planning Crew | ✅ Built | `crews/product_planning.py`, incl. `assemble_product_planning_result` → `ProductPlanningResult` |
 | Deterministic Specialist Planner | ✅ Built | `src/buildwise/planning/` implements the pure-Python planner; `BuildWiseConsultingFlow.plan_specialists()` now calls it, stores the `SpecialistExecutionPlan`, registers selected executions, and passes that exact plan to the Technical Planning Crew |
 | Technical Planning Crew | ✅ Built | `crews/technical_planning.py`, incl. `assemble_technical_planning_result` → `TechnicalPlanningResult` |
-| Cost Aggregator | ✅ Built | `application/usage_aggregator.py` converts each Crew's provider-reported `UsageMetrics` into a `UsageRecord` and updates `UsageSummary` with prompt/completion/total tokens, successful request count, and measured execution duration. Explicit provider/model/cost metadata is retained when supplied; otherwise estimated cost remains `null` rather than implying zero cost. The Flow enforces token and known-cost limits without maintaining a pricing catalog |
+| Cost Aggregator | ✅ Built | `application/cost_aggregator.py` deterministically collects project/build estimates from Product, Market & GTM, Solution, AI, Security, and QA outputs into a canonical `CostSummary` before Lead Review. It preserves source ownership, normalizes range and point estimates, and totals only matching currency/frequency groups without exchange-rate or annualization assumptions. The separate `application/usage_aggregator.py` remains responsible for BuildWise's own LLM tokens, requests, duration, and provider-reported execution cost |
 | Lead Review Crew | ✅ Built | `crews/lead_review.py` + `tasks/lead_review.py` |
 | approved → blueprint | ✅ Built | The live review router handles `APPROVED` and `APPROVED_WITH_LIMITATIONS`, verifies `approved_for_blueprint`, and invokes `BlueprintAssembler` by default while retaining the injectable `BlueprintBuilder` boundary |
 | revisions → rerun affected planning Crew | ✅ Built | `flows/revisions.py` deterministically maps Product Definition, Requirements, and Market & GTM to the Product Planning Crew, and Solution, AI, Security, and QA revisions to the Technical Planning Crew. Technical revisions rerun only the target plus selected downstream dependants (Solution → selected AI/Security/QA; AI → selected Security/QA; Security → selected QA; QA only). The Flow retains revision history and enforces `state.limits.maximum_specialist_revisions`; no revision-planning Agent is used |
@@ -110,7 +110,25 @@ Unsupported targets and technical targets not selected for the Flow are
 rejected deterministically. Before a revision starts, the router checks
 `state.revision_count` against
 `state.limits.maximum_specialist_revisions`; exhaustion routes the Flow to
-failure.
+failure. A `COST_SUMMARY` revision deterministically rebuilds the summary
+without creating or invoking another Agent or Crew.
+
+#### Project Cost Aggregator — `src/buildwise/application/cost_aggregator.py`
+
+After Technical Planning, the Flow gathers implementation-project estimates
+owned by Product Definition, optional Market & GTM, Solution Architecture,
+optional AI Architecture, optional Security Architecture, and optional QA &
+Evaluation. Range estimates retain their minimum, expected, and maximum
+values; point estimates are normalized to equal minimum/expected/maximum
+values. `CostSummary` keeps every estimate's source and totals only values
+with the same currency and frequency, so one-time, monthly, annual, and
+per-request costs are never incorrectly combined.
+
+The summary is retained in Flow state and persistence, passed into the Lead
+Review Crew as structured context, checked for staleness after revisions, and
+used by the blueprint Costs section. This project-cost path is deliberately
+separate from `usage_aggregator.py`, which measures the cost and usage of
+running BuildWise itself.
 
 ### 3. ✅ Done — Minimal persistence — `src/buildwise/persistence/`
 Implemented the five MVP tables: `consultations`, `artifacts`,
@@ -132,10 +150,13 @@ SQLite and a local `data/` directory are not required for the active setup.
 `validation/output_validator.py::validate_output(state)` is the final
 deterministic cross-stage pass before blueprint assembly. It requires
 Discovery, Product Planning, the specialist execution plan, Technical
-Planning, and Lead Review; verifies all session-owned artifacts; reruns the
+Planning, `CostSummary`, and Lead Review; verifies all session-owned
+artifacts; rejects a stale or inconsistent project-cost summary; reruns the
 existing aggregate, ownership, and execution-graph domain validators; checks
 the technical outputs against selected specialists; and prevents blueprint
 approval when the Lead Review is inconsistent or retains a blocking revision.
+`BuildWiseConsultingFlow.build_blueprint()` now invokes this validator before
+the deterministic generator.
 
 Lead Review decision consistency now has one reusable domain check,
 `LeadReview.validate_decision_consistency()`, shared by the task guardrail and
@@ -143,7 +164,8 @@ the final output validator rather than duplicating the decision rules.
 
 ### 5. ✅ Done — Deterministic Blueprint Generator — `src/buildwise/reporting/`
 `BlueprintAssembler` consumes Discovery, Product Planning, the specialist
-execution plan, Technical Planning, Lead Review, and the Flow usage summary.
+execution plan, Technical Planning, the canonical project `CostSummary`, Lead
+Review, and the Flow usage summary.
 It produces a 17-section `ProductBlueprint`, aggregates risks, assumptions,
 open questions, limitations, implementation phases, and usage, and renders
 the complete Markdown deterministically. `MarkdownRenderer` can write that

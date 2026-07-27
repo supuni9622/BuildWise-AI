@@ -14,6 +14,7 @@ from crewai.flow.persistence.base import FlowPersistence
 from pydantic import BaseModel, PrivateAttr
 
 from buildwise.agents.factory import AgentFactory
+from buildwise.application.cost_aggregator import ProjectCostAggregator
 from buildwise.application.usage_aggregator import UsageAggregator
 from buildwise.config.settings import Settings, get_settings
 from buildwise.crews.discovery import (
@@ -32,6 +33,7 @@ from buildwise.crews.technical_planning import (
 )
 from buildwise.domain.blueprint import ProductBlueprint
 from buildwise.domain.common import WarningMessage, generate_uuid
+from buildwise.domain.costs import CostSummary
 from buildwise.domain.discovery import DiscoveryRefinement, DiscoveryResult
 from buildwise.domain.enums import (
     ReviewDecision,
@@ -66,6 +68,7 @@ from buildwise.reporting.storage import (
     BlueprintReportStorage,
     create_blueprint_report_storage,
 )
+from buildwise.validation.output_validator import validate_output
 
 logger = structlog.get_logger(__name__)
 
@@ -103,6 +106,7 @@ class BlueprintBuilder(Protocol):
         product_planning: ProductPlanningResult,
         specialist_plan: SpecialistExecutionPlan,
         technical_planning: TechnicalPlanningResult,
+        cost_summary: CostSummary,
         lead_review: LeadReview,
         usage_summary: UsageSummary,
     ) -> ProductBlueprint:
@@ -116,6 +120,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
     _settings: Settings = PrivateAttr()
     _agent_factory: AgentFactory = PrivateAttr()
     _planner: SpecialistPlanner = PrivateAttr()
+    _project_cost_aggregator: ProjectCostAggregator = PrivateAttr()
     _usage_aggregator: UsageAggregator = PrivateAttr()
     _blueprint_builder: BlueprintBuilder = PrivateAttr()
     _blueprint_report_storage: BlueprintReportStorage = PrivateAttr()
@@ -148,6 +153,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
         self._settings = resolved_settings
         self._agent_factory = agent_factory or AgentFactory(settings=resolved_settings)
         self._planner = planner or SpecialistPlanner()
+        self._project_cost_aggregator = ProjectCostAggregator()
         self._usage_aggregator = UsageAggregator()
         self._blueprint_builder = blueprint_builder or BlueprintAssembler()
         self._blueprint_report_storage = (
@@ -314,6 +320,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
         )
         self._complete_specialist_executions(result)
         self.state.set_technical_planning_result(result)
+        self._aggregate_project_costs()
         route_after_specialists(self.state)
         logger.info("technical_planning_completed", session_id=str(self.state.session_id))
         return result
@@ -336,6 +343,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
             self.state.technical_planning_result,
             "technical_planning_result",
         )
+        cost_summary = self._require(self.state.cost_summary, "cost_summary")
         crew = self._lead_review_crew_factory(
             discovery_result=discovery,
             product_definition=product.product_definition,
@@ -346,6 +354,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
             ai_architecture=technical.ai_architecture,
             security_architecture=technical.security_architecture,
             qa_evaluation=technical.qa_evaluation,
+            cost_summary=cost_summary,
             revision_history=self.state.revision_history,
             agent_factory=self._agent_factory,
             settings=self._settings,
@@ -390,12 +399,15 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
                 requests,
                 specialists=set(revision_route.technical_specialists),
             )
+        elif revision_route.rebuild_cost_summary:
+            self._aggregate_project_costs()
         return FlowRoute.RUN_LEAD_REVIEW.value
 
     @listen(FlowRoute.ASSEMBLE_BLUEPRINT.value)
     def build_blueprint(self) -> ProductBlueprint:
         """Invoke the blueprint boundary only after Lead Review approval."""
 
+        validate_output(self.state)
         self._transition(SessionStage.BLUEPRINT_ASSEMBLY, SessionStatus.PROCESSING)
         blueprint = self._blueprint_builder.build(
             discovery=self._require(self.state.discovery_result, "discovery_result"),
@@ -411,6 +423,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
                 self.state.technical_planning_result,
                 "technical_planning_result",
             ),
+            cost_summary=self._require(self.state.cost_summary, "cost_summary"),
             lead_review=self._require(self.state.lead_review, "lead_review"),
             usage_summary=self.state.usage,
         )
@@ -554,6 +567,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
         )
         self._complete_specialist_executions(result)
         self.state.set_technical_planning_result(result)
+        self._aggregate_project_costs()
 
     def _clarification_context(self) -> ProductIdeaContext | None:
         if not self.state.clarification_answers:
@@ -569,6 +583,19 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
                 }
             ),
         )
+
+    def _aggregate_project_costs(self) -> None:
+        summary = self._project_cost_aggregator.aggregate(
+            product_planning=self._require(
+                self.state.product_planning_result,
+                "product_planning_result",
+            ),
+            technical_planning=self._require(
+                self.state.technical_planning_result,
+                "technical_planning_result",
+            ),
+        )
+        self.state.set_cost_summary(summary)
 
     def _mark_selected_specialists_running(
         self,

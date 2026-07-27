@@ -32,6 +32,7 @@ TECHNICAL_REVISION_TARGETS = frozenset(
         RevisionTarget.QA_AND_EVALUATION,
     }
 )
+COST_REVISION_TARGETS = frozenset({RevisionTarget.COST_SUMMARY})
 
 _TARGET_SPECIALIST = {
     RevisionTarget.SOLUTION_ARCHITECTURE: SpecialistType.SOLUTION_ARCHITECTURE,
@@ -54,6 +55,7 @@ class RevisionRoute:
     product_targets: frozenset[RevisionTarget]
     technical_targets: frozenset[RevisionTarget]
     technical_specialists: tuple[SpecialistType, ...]
+    rebuild_cost_summary: bool
 
     @property
     def crews(self) -> frozenset[RevisionCrew]:
@@ -78,7 +80,7 @@ def route_targeted_revision(
         raise ValueError("The maximum number of specialist revisions was exceeded.")
 
     targets = {request.target for request in requests}
-    supported = PRODUCT_REVISION_TARGETS | TECHNICAL_REVISION_TARGETS
+    supported = PRODUCT_REVISION_TARGETS | TECHNICAL_REVISION_TARGETS | COST_REVISION_TARGETS
     unsupported = targets.difference(supported)
     if unsupported:
         formatted = ", ".join(sorted(target.value for target in unsupported))
@@ -106,4 +108,5 @@ def route_targeted_revision(
         technical_specialists=tuple(
             specialist for specialist in _TECHNICAL_ORDER if specialist in affected
         ),
+        rebuild_cost_summary=RevisionTarget.COST_SUMMARY in targets,
     )

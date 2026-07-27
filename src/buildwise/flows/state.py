@@ -19,6 +19,7 @@ from buildwise.domain.common import (
     generate_uuid,
     utc_now,
 )
+from buildwise.domain.costs import CostSummary
 from buildwise.domain.discovery import (
     ClarificationQuestionSet,
     DiscoveryResult,
@@ -462,6 +463,7 @@ class BuildWiseFlowState(BuildWiseModel):
     product_planning_result: ProductPlanningResult | None = None
     specialist_execution_plan: SpecialistExecutionPlan | None = None
     technical_planning_result: TechnicalPlanningResult | None = None
+    cost_summary: CostSummary | None = None
     lead_review: LeadReview | None = None
     product_blueprint: ProductBlueprint | None = None
     blueprint_report: BlueprintReportRecord | None = None
@@ -1248,6 +1250,18 @@ class BuildWiseFlowState(BuildWiseModel):
             solution_architecture=result.solution_architecture,
             updated_at=utc_now(),
         )
+
+    def set_cost_summary(self, summary: CostSummary) -> None:
+        """Store the deterministic implementation-project cost aggregate."""
+
+        self._require_matching_session(
+            artifact_name="cost_summary",
+            artifact_session_id=summary.session_id,
+        )
+        if self.product_planning_result is None or self.technical_planning_result is None:
+            raise ValueError("Product and technical planning are required before cost aggregation.")
+        self.cost_summary = summary
+        self.updated_at = utc_now()
 
     def set_lead_review(self, review: LeadReview) -> None:
         """Store the latest Lead Review and append its revision requests."""

@@ -15,6 +15,7 @@ from buildwise.agents.factory import AgentFactory
 from buildwise.config.settings import Settings
 from buildwise.domain.ai_architecture import AIArchitecture
 from buildwise.domain.architecture import SolutionArchitecture
+from buildwise.domain.costs import CostSummary
 from buildwise.domain.discovery import DiscoveryResult
 from buildwise.domain.enums import AgentType
 from buildwise.domain.market_and_gtm import MarketAndGTMStrategy
@@ -38,6 +39,7 @@ def create_lead_review_crew(
     ai_architecture: AIArchitecture | None,
     security_architecture: SecurityArchitecture | None,
     qa_evaluation: QAEvaluationPlan | None,
+    cost_summary: CostSummary,
     revision_history: list[RevisionRequest],
     agent_factory: AgentFactory,
     settings: Settings,
@@ -59,6 +61,7 @@ def create_lead_review_crew(
             selected. ``None`` when it was not.
         qa_evaluation: The completed QAEvaluationPlan, when selected.
             ``None`` when it was not.
+        cost_summary: Deterministic implementation-project cost aggregate.
         revision_history: Revision requests already issued in prior review
             rounds.
         agent_factory: Factory used to construct the native Lead Reviewer
@@ -83,6 +86,7 @@ def create_lead_review_crew(
         ai_architecture=ai_architecture,
         security_architecture=security_architecture,
         qa_evaluation=qa_evaluation,
+        cost_summary=cost_summary,
         revision_history=revision_history,
         guardrail_max_retries=settings.max_retries_per_operation,
     )

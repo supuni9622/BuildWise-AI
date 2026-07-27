@@ -26,6 +26,7 @@ _ARTIFACT_FIELDS = {
     "product_planning_result": "product_planning",
     "specialist_execution_plan": "specialist_plan",
     "technical_planning_result": "technical_planning",
+    "cost_summary": "cost_summary",
     "lead_review": "lead_review",
     "product_blueprint": "blueprint",
 }

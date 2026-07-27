@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any
 
 from buildwise.domain.blueprint import (
     BlueprintSection,
@@ -12,6 +11,7 @@ from buildwise.domain.blueprint import (
 from buildwise.domain.blueprint import (
     UsageSummary as BlueprintUsageSummary,
 )
+from buildwise.domain.costs import CostSummary, ProjectCostEstimate
 from buildwise.domain.discovery import DiscoveryResult
 from buildwise.domain.enums import BlueprintSectionType
 from buildwise.domain.product import ProductFeature, ProductRoadmapItem
@@ -30,6 +30,7 @@ def assemble_blueprint(
     product_planning: ProductPlanningResult,
     specialist_plan: SpecialistExecutionPlan,
     technical_planning: TechnicalPlanningResult,
+    cost_summary: CostSummary,
     lead_review: LeadReview,
     usage_summary: UsageSummary,
 ) -> ProductBlueprint:
@@ -218,7 +219,7 @@ def assemble_blueprint(
             BlueprintSectionType.COSTS,
             "Costs",
             "Cost estimates are directional and should be validated before commitment.",
-            _cost_markdown(product_planning, technical_planning, lead_review, usage_summary),
+            _cost_markdown(cost_summary, usage_summary),
         ),
         _section(
             BlueprintSectionType.RISKS_AND_ASSUMPTIONS,
@@ -288,6 +289,7 @@ class BlueprintAssembler:
         product_planning: ProductPlanningResult,
         specialist_plan: SpecialistExecutionPlan,
         technical_planning: TechnicalPlanningResult,
+        cost_summary: CostSummary,
         lead_review: LeadReview,
         usage_summary: UsageSummary | None = None,
     ) -> ProductBlueprint:
@@ -296,6 +298,7 @@ class BlueprintAssembler:
             product_planning=product_planning,
             specialist_plan=specialist_plan,
             technical_planning=technical_planning,
+            cost_summary=cost_summary,
             lead_review=lead_review,
             usage_summary=usage_summary or UsageSummary(),
         )
@@ -371,29 +374,25 @@ def _roadmap_markdown(items: Iterable[ProductRoadmapItem]) -> str:
 
 
 def _cost_markdown(
-    product: ProductPlanningResult,
-    technical: TechnicalPlanningResult,
-    review: LeadReview,
+    cost_summary: CostSummary,
     usage: UsageSummary,
 ) -> str:
-    estimates = [
-        *product.product_definition.product_cost_estimates,
-        *(product.market_and_gtm.gtm_cost_estimates if product.market_and_gtm else []),
-        *technical.solution_architecture.architecture_cost_estimates,
-        *(technical.ai_architecture.ai_cost_estimates if technical.ai_architecture else []),
-        *(
-            technical.security_architecture.estimated_costs
-            if technical.security_architecture
-            else []
-        ),
-        *(technical.qa_evaluation.estimated_costs if technical.qa_evaluation else []),
-        *review.estimated_review_costs,
-    ]
-    lines = [_format_cost(item) for item in estimates]
+    lines = [_format_project_cost(item) for item in cost_summary.estimates]
+    if cost_summary.totals:
+        lines.extend(["", "### Totals by currency and frequency"])
+        lines.extend(
+            (
+                f"- {total.currency} {total.frequency.value}: "
+                f"{total.minimum:,.2f}-{total.maximum:,.2f} "
+                f"(expected {total.expected:,.2f}; "
+                f"{total.estimate_count} estimates)"
+            )
+            for total in cost_summary.totals
+        )
     if usage.estimated_cost_usd is None:
-        lines.append("- Blueprint-generation AI usage: cost unavailable")
+        lines.extend(["", "- BuildWise LLM execution: cost unavailable"])
     else:
-        lines.append(f"- Blueprint-generation AI usage: ${usage.estimated_cost_usd:,.2f}")
+        lines.extend(["", f"- BuildWise LLM execution: ${usage.estimated_cost_usd:,.2f}"])
     return "\n".join(lines)
 
 
@@ -405,16 +404,13 @@ def _model_usage(usage: UsageSummary) -> dict[str, int]:
     return result
 
 
-def _format_cost(item: Any) -> str:
-    name = getattr(item, "item", getattr(item, "name", "Estimate"))
-    frequency = getattr(item, "frequency", "unspecified")
-    if hasattr(item, "range"):
-        expected = item.range.expected
-        amount = float(expected.amount)
-        currency = expected.currency
-        return f"- {name}: {currency} {amount:,.2f} ({frequency})"
-    amount = float(getattr(item, "estimated_cost", 0))
-    return f"- {name}: ${amount:,.2f} ({frequency})"
+def _format_project_cost(item: ProjectCostEstimate) -> str:
+    optional = "; optional" if item.optional else ""
+    return (
+        f"- **{item.name}** [{item.source.value}]: "
+        f"{item.currency} {item.minimum:,.2f}-{item.maximum:,.2f} "
+        f"(expected {item.expected:,.2f}; {item.frequency.value}{optional})"
+    )
 
 
 def _unique(values: Iterable[str]) -> list[str]:

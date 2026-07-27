@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from buildwise.application.cost_aggregator import aggregate_project_costs
 from buildwise.domain.architecture import SolutionArchitecture
 from buildwise.domain.enums import BlueprintSectionType, ReviewDecision
 from buildwise.domain.review import LeadReview
@@ -70,6 +71,10 @@ def test_assemble_blueprint_keeps_open_questions_distinct_from_limitations(
         product_planning=product_planning,
         specialist_plan=plan,
         technical_planning=technical,
+        cost_summary=aggregate_project_costs(
+            product_planning=product_planning,
+            technical_planning=technical,
+        ),
         lead_review=review,
         usage_summary=usage,
     )

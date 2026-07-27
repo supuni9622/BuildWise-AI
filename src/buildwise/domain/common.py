@@ -307,8 +307,8 @@ class CostEstimate(BuildWiseModel):
     """A cost estimate contributed by a BuildWise product area.
 
     Cost estimates remain distributed across Product, Architecture, AI,
-    Security, QA, and GTM outputs. The later CostSummary model will aggregate
-    these estimates without replacing their original ownership.
+    Security, QA, and GTM outputs. ``domain.costs.CostSummary`` aggregates
+    them without replacing their original ownership.
     """
 
     id: ArtifactId = Field(default_factory=generate_uuid)
