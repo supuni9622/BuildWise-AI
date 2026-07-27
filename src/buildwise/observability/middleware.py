@@ -6,7 +6,11 @@ from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from structlog.contextvars import bind_contextvars, clear_contextvars
 
-from buildwise.observability.context import new_request_id, set_request_id
+from buildwise.observability.context import (
+    new_request_id,
+    new_trace_id,
+    set_request_id,
+)
 
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
@@ -18,12 +22,13 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         clear_contextvars()
 
         request_id = request.headers.get("X-Request-ID") or new_request_id()
+        trace_id = request.headers.get("X-Trace-ID") or new_trace_id()
         set_request_id(request_id)
         bind_contextvars(
             request_id=request_id,
             session_id=None,
             flow_id=None,
-            trace_id=None,
+            trace_id=trace_id,
             stage="http_request",
         )
 
@@ -40,6 +45,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         duration_ms = round((perf_counter() - started_at) * 1000, 2)
         response.headers["X-Request-ID"] = request_id
+        response.headers["X-Trace-ID"] = trace_id
 
         logger.info(
             "request_completed",

@@ -97,6 +97,21 @@ def create_product_definition_task(
         "or open questions carried forward from Discovery.\n\n"
         "Required output: A schema-valid ProductDefinition referencing this "
         "DiscoveryResult by discovery_result_id.\n\n"
+        "Identifier rules:\n"
+        "- Every id and every value in an *_id or *_ids reference field must "
+        "be a complete RFC 4122 UUID string (for example, "
+        "'6ba7b810-9dad-11d1-80b4-00c04fd430c8').\n"
+        "- Do not emit labels such as 'goal-001', 'persona-001', or "
+        "'feature-001' as identifiers.\n"
+        "- Reuse the exact generated UUID when another field references that "
+        "artifact; do not generate a different UUID for the reference.\n"
+        "- Reference dependencies by artifact UUID, never by feature or "
+        "roadmap name, and never repeat an ID within the same list.\n"
+        "- Preserve session_id and discovery_result_id exactly from the "
+        "DiscoveryResult context.\n\n"
+        "Risk acceptance rules:\n"
+        "- When accepted=false, acceptance_rationale must be null.\n"
+        "- When accepted=true, provide acceptance_rationale.\n\n"
         "Important boundaries:\n"
         "- Do not define technical or AI architecture, technology choices, "
         "or model selection.\n"
@@ -114,7 +129,9 @@ def create_product_definition_task(
 
     expected_output = (
         "A schema-valid ProductDefinition JSON object matching the "
-        "ProductDefinition Pydantic model exactly, with no additional prose."
+        "ProductDefinition Pydantic model exactly, using RFC 4122 UUIDs for "
+        "all identifiers and preserving cross-references, with no additional "
+        "prose."
     )
 
     guardrail_list: list[TaskGuardrail] = [require_pydantic_output(ProductDefinition)]

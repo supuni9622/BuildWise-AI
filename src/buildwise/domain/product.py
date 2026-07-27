@@ -468,6 +468,71 @@ class ProductRisk(BuildWiseModel):
         return self
 
 
+def _copy_mapping_list(value: object) -> list[dict[str, object]]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("Product artifact collections must be lists.")
+    result: list[dict[str, object]] = []
+    for item in value:
+        if isinstance(item, BuildWiseModel):
+            result.append(item.model_dump(mode="python"))
+        elif isinstance(item, dict):
+            result.append(dict(item))
+        else:
+            raise ValueError(
+                "Product artifact collections must contain objects."
+            )
+    return result
+
+
+def _artifact_label_lookup(
+    artifacts: list[dict[str, object]],
+    label_field: str,
+) -> dict[str, object]:
+    lookup: dict[str, object] = {}
+    for artifact in artifacts:
+        label = artifact.get(label_field)
+        identifier = artifact.get("id")
+        if isinstance(label, str) and identifier is not None:
+            lookup[label.strip().casefold()] = identifier
+    return lookup
+
+
+def _deduplicate(values: list[object]) -> list[object]:
+    result: list[object] = []
+    for value in values:
+        if value not in result:
+            result.append(value)
+    return result
+
+
+def _normalize_reference_list(
+    owner: dict[str, object],
+    field_name: str,
+    label_lookup: dict[str, object],
+) -> None:
+    raw_references = owner.get(field_name)
+    if not isinstance(raw_references, list):
+        return
+    resolved = [
+        label_lookup.get(reference.strip().casefold(), reference)
+        if isinstance(reference, str)
+        else reference
+        for reference in raw_references
+    ]
+    owner[field_name] = _deduplicate(resolved)
+
+
+def _deduplicate_list_field(
+    owner: dict[str, object],
+    field_name: str,
+) -> None:
+    value = owner.get(field_name)
+    if isinstance(value, list):
+        owner[field_name] = _deduplicate(value)
+
+
 class ProductDefinition(BuildWiseModel):
     """Canonical structured output produced by the Product Manager.
 
@@ -515,6 +580,80 @@ class ProductDefinition(BuildWiseModel):
     confidence_score: NormalizedScore
 
     generated_at: datetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_generated_references(cls, value: object) -> object:
+        """Repair deterministic reference-shape mistakes in model output.
+
+        Provider-native structured output validates before CrewAI guardrails
+        execute. Resolve human-readable artifact labels to IDs already present
+        in the same payload, remove duplicate references while preserving
+        order, and clear a risk rationale that is inapplicable when the risk
+        was not accepted. Unknown references remain untouched and therefore
+        still fail normal UUID/reference validation.
+        """
+
+        if not isinstance(value, dict):
+            return value
+
+        normalized = dict(value)
+        goals = _copy_mapping_list(normalized.get("goals"))
+        personas = _copy_mapping_list(normalized.get("personas"))
+        features = _copy_mapping_list(normalized.get("features"))
+        roadmap = _copy_mapping_list(normalized.get("roadmap"))
+        risks = _copy_mapping_list(normalized.get("risks"))
+
+        goal_ids = _artifact_label_lookup(goals, "title")
+        persona_ids = _artifact_label_lookup(personas, "name")
+        feature_ids = _artifact_label_lookup(features, "name")
+        roadmap_ids = _artifact_label_lookup(roadmap, "title")
+
+        for feature in features:
+            _normalize_reference_list(
+                feature,
+                "target_persona_ids",
+                persona_ids,
+            )
+            _normalize_reference_list(
+                feature,
+                "supporting_goal_ids",
+                goal_ids,
+            )
+            _normalize_reference_list(feature, "dependencies", feature_ids)
+            _deduplicate_list_field(feature, "source_reference_ids")
+
+        for item in roadmap:
+            _normalize_reference_list(item, "feature_ids", feature_ids)
+            _normalize_reference_list(item, "dependency_ids", roadmap_ids)
+
+        for risk in risks:
+            _normalize_reference_list(risk, "affected_goal_ids", goal_ids)
+            _normalize_reference_list(
+                risk,
+                "affected_feature_ids",
+                feature_ids,
+            )
+            _deduplicate_list_field(risk, "source_reference_ids")
+            if risk.get("accepted") is not True:
+                risk["acceptance_rationale"] = None
+
+        normalized["goals"] = goals
+        normalized["personas"] = personas
+        normalized["features"] = features
+        normalized["roadmap"] = roadmap
+        normalized["risks"] = risks
+        _normalize_reference_list(
+            normalized,
+            "mvp_feature_ids",
+            feature_ids,
+        )
+        _normalize_reference_list(
+            normalized,
+            "out_of_scope_feature_ids",
+            feature_ids,
+        )
+        return normalized
 
     @field_validator("generated_at")
     @classmethod

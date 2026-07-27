@@ -41,9 +41,10 @@ class Settings(BaseSettings):
 
     crewai_tracing_enabled: bool = True
     crewai_verbose: bool = True
+    crewai_reasoning_enabled: bool = False
     llm_max_retries: int = Field(default=2, ge=0, le=5)
-    llm_request_timeout_seconds: int = Field(default=90, ge=10, le=300)
-    max_agent_iterations: int = Field(default=12, ge=1, le=50)
+    llm_request_timeout_seconds: int = Field(default=240, ge=10, le=300)
+    max_agent_iterations: int = Field(default=4, ge=1, le=50)
     max_execution_seconds: int = Field(default=900, ge=60, le=3600)
 
     max_session_tokens: int = Field(default=120_000, ge=1_000)

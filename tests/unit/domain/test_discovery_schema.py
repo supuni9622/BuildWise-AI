@@ -4,7 +4,11 @@ import pytest
 from openai.lib._pydantic import to_strict_json_schema
 from pydantic import ValidationError
 
-from buildwise.domain.discovery import CapabilityClassification, DiscoveryResult
+from buildwise.domain.discovery import (
+    CapabilityClassification,
+    DiscoveryRefinement,
+    DiscoveryResult,
+)
 from buildwise.domain.enums import CapabilityType, ConfidenceLevel
 from buildwise.domain.intake import ProductIdeaContext
 
@@ -57,6 +61,59 @@ def test_resolved_context_keys_remain_slug_validated() -> None:
                 ],
             }
         )
+
+
+def test_refinement_derives_non_blocking_route_before_validation() -> None:
+    refinement = DiscoveryRefinement.model_validate(
+        {
+            "unknowns": [],
+            "completeness": {
+                "score": 0.6,
+                "blocking_unknown_keys": [],
+                "non_blocking_unknown_keys": ["deployment_region"],
+                "missing_categories": ["technical_constraints"],
+                "satisfied_categories": ["problem"],
+                "rationale": "The remaining uncertainty is non-blocking.",
+            },
+            "clarification_questions": {
+                "session_id": "cf4fca52-e008-4bd5-aa8e-563e9f2f0a83",
+                "round_number": 2,
+                "questions": [],
+                "summary": "No blocking questions remain.",
+                "blocking": False,
+            },
+            "recommended_next_step": "request_clarification",
+            "limitations": ["Deployment region remains an assumption."],
+            "confidence": "medium",
+            "confidence_score": 0.6,
+        }
+    )
+
+    assert refinement.clarification_questions is None
+    assert refinement.recommended_next_step == "continue_with_limitations"
+
+
+def test_refinement_without_blockers_or_limitations_continues() -> None:
+    refinement = DiscoveryRefinement.model_validate(
+        {
+            "unknowns": [],
+            "completeness": {
+                "score": 0.9,
+                "blocking_unknown_keys": [],
+                "non_blocking_unknown_keys": [],
+                "missing_categories": [],
+                "satisfied_categories": ["problem"],
+                "rationale": "The clarification resolved the blocker.",
+            },
+            "clarification_questions": None,
+            "recommended_next_step": "request_clarification",
+            "limitations": [],
+            "confidence": "high",
+            "confidence_score": 0.9,
+        }
+    )
+
+    assert refinement.recommended_next_step == "continue_to_product_definition"
 
 
 def _contains_typed_additional_properties(value: object) -> bool:

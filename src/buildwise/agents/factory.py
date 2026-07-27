@@ -190,6 +190,9 @@ class AgentFactory:
         apps = self._resolve_apps(contract)
 
         runtime = contract.runtime
+        reasoning_enabled = (
+            runtime.reasoning and self._settings.crewai_reasoning_enabled
+        )
 
         agent_kwargs: dict[str, Any] = {
             "role": contract.role,
@@ -205,13 +208,17 @@ class AgentFactory:
                 self._settings.max_agent_iterations,
             ),
             "max_rpm": runtime.max_rpm,
-            "reasoning": runtime.reasoning,
-            "max_reasoning_attempts": (runtime.max_reasoning_attempts),
+            "reasoning": reasoning_enabled,
             "respect_context_window": (runtime.respect_context_window),
             "use_system_prompt": runtime.use_system_prompt,
             "cache": runtime.cache,
             "max_execution_time": (self._settings.max_execution_seconds),
         }
+
+        if reasoning_enabled:
+            agent_kwargs["max_reasoning_attempts"] = (
+                runtime.max_reasoning_attempts
+            )
 
         if knowledge_sources:
             agent_kwargs["knowledge_sources"] = knowledge_sources

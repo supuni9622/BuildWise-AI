@@ -159,7 +159,11 @@ def create_discovery_refinement_task(
         "must equal the authoritative session_id. "
         "Completeness percentage and decision booleans are intentionally absent; "
         "the application derives them deterministically from score, threshold, and "
-        "blocking_unknown_keys. "
+        "blocking_unknown_keys. If blocking_unknown_keys is non-empty, return "
+        "clarification_questions and recommended_next_step='request_clarification'. "
+        "If it is empty, return clarification_questions=null and never request "
+        "clarification; use 'continue_with_limitations' when limitations remain, "
+        "otherwise use 'continue_to_product_definition'. "
     )
     if at_round_limit:
         description += (

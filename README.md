@@ -7,6 +7,9 @@ human-in-the-loop discovery, deterministic specialist routing, focused planning
 Crews, project-cost aggregation, Lead Review, bounded revisions, guardrails,
 and deterministic report generation.
 
+![hero_page](image.png)
+![in_progress](image-1.png)
+
 ![BuildWise AI final flow](<BuildWise AI -final flow.drawio.png>)
 
 ## What it produces
@@ -162,8 +165,8 @@ stores report version, key/path, generation time, and Lead Review ID.
 ## Documentation
 
 - [Current end-to-end implementation flow](docs/current_end_to_end_flow.md)
+- [Latency incident and responsive AI workflow article](docs/articles/from-two-minute-waits-to-responsive-ai-workflows.md)
 - [Setup and testing commands](docs/setup_testing_commands.md)
-- [Gap analysis](docs/gap_analysis.md)
 - [Processor and classifier catalog](<docs/architecture/2. buildwise_processors_classifiers_catalog.md>)
 - [Model selection analysis](<docs/architecture/3. llm_model_selection.md>)
 

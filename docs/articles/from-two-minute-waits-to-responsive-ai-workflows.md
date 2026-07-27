@@ -315,16 +315,302 @@ asynchronous work needs an explicit terminal failure state.
 
 ---
 
+## Incident: the Business Analyst was executing an internal workflow
+
+After the initial responsiveness changes, one consultation still remained in
+the Business Analyst (BA) step for several minutes. This was not ordinary
+frontend polling and it was not one slow requirements-generation request.
+
+The captured log showed CrewAI's optional reasoning runtime expanding the BA
+task into at least 13 planned substeps. It then performed separate execution
+and observation calls for those steps:
+
+```text
+Plan
+  → Execute step 1
+  → Observe step 1
+  → Execute step 2
+  → Observe step 2
+  → ...
+```
+
+Examples in the trace included:
+
+- `[Execute] Step 1 ...`
+- `[Observe] Step 1 ...`
+- execution of steps 1–6, 9, 11, and 13;
+- observation failures followed by continued planning;
+- repeated attempts to locate a ProductDefinition file in the repository.
+
+The last behavior was especially revealing. BuildWise had already supplied
+the canonical `ProductDefinition` through native task context. The internal
+plan nevertheless treated the task like an open-ended workspace exercise,
+ran exploratory filesystem operations, and expected intermediate JSON files.
+Those actions did not contribute to the required
+`RequirementsSpecification`.
+
+The supplied excerpt spans approximately 14:21:10 to 14:24:34—more than three
+minutes—and was still observing early plan steps. It also contains one call
+with 11,504 total tokens and many smaller planning and observation calls.
+This was a bounded but highly repetitive workflow, not an infinite loop.
+
+### Why it happened
+
+The BA contract declared:
+
+```text
+reasoning = true
+max_reasoning_attempts = 3
+max_iter = 12
+```
+
+In CrewAI 1.15, enabling reasoning can turn one task into a plan,
+execute, and observe workflow. The Business Analyst skill supplied detailed
+methodology, so the planner decomposed it into many concrete steps.
+
+This mode can be useful for an autonomous agent solving an unfamiliar
+workspace problem. It was a poor fit for this boundary because:
+
+- the input was already a typed artifact;
+- the output was already a strict Pydantic schema;
+- the task had no approved action tools;
+- deterministic validators already checked references and completeness;
+- intermediate filesystem artifacts were neither required nor consumed.
+
+The reasoning loop multiplied latency, token usage, provider calls, and
+failure opportunities without adding a useful application artifact.
+
+### Immediate mitigation
+
+CrewAI reasoning is now a global opt-in:
+
+```env
+CREWAI_REASONING_ENABLED=false
+MAX_AGENT_ITERATIONS=4
+```
+
+The Agent factory enables a contract's reasoning mode only when both the
+contract requests it and the global setting explicitly permits it. With the
+default configuration:
+
+- BA executes the Requirements task directly;
+- specialist and Lead Reviewer tasks also avoid hidden plan/execute/observe
+  expansion;
+- CrewAI skills remain attached as methodology;
+- strict task schemas and domain validators remain active;
+- the per-agent iteration ceiling is four instead of twelve.
+
+This is an operational mitigation, not a claim that all reasoning is harmful.
+Reasoning may be re-enabled for a deliberately selected task after that task
+has a measured latency budget and a plan whose intermediate outputs are
+actually used.
+
+---
+
+## Current end-to-end execution path
+
+The current request and execution lifecycle is:
+
+```text
+Frontend
+  → POST consultation
+  → API validation, input guardrail, and durable queued state
+  → 202 Accepted
+  → background CrewAI Flow
+      → Discovery Crew
+      → optional clarification pause/refinement
+      → Product Planning Crew
+          → Product Manager
+          → Business Analyst
+          → optional Market & GTM Strategist
+      → deterministic Specialist Planner
+      → Technical Planning Crew
+          → Solution Architect
+          → optional AI Architect
+          → optional Security Architect
+          → optional QA and Evaluation Architect
+      → deterministic Project Cost Aggregator
+      → Lead Review Crew
+      → optional bounded targeted revision
+      → deterministic pre-assembly validation
+      → deterministic blueprint assembly and Markdown rendering
+      → post-assembly validation
+      → filesystem or S3 report storage
+  → frontend polling, result display, and Markdown download
+```
+
+The frontend status poll runs every four seconds. Those repeated
+`GET /consultations/{id}` entries are expected polling traffic; they do not
+restart the Crew and are not agent iterations.
+
+The Flow now explicitly checkpoints a stage before each long Crew call. This
+lets the status endpoint show Discovery, Product Planning, Technical
+Planning, and Lead Review while those operations are running instead of
+displaying the previous completed stage.
+
+### Expected first-pass model tasks
+
+With reasoning disabled and no retries, a first-pass consultation performs:
+
+| Stage | Model-backed tasks | Execution mode |
+|---|---:|---|
+| Initial Discovery | 1 | Direct structured task |
+| Clarification refinement | 0 or 1 per round | Compact structured task |
+| Product Planning | 2, or 3 with Market & GTM | Sequential |
+| Specialist planning | 0 | Deterministic Python |
+| Technical Planning | 1–4 | Sequential, based on selection |
+| Project cost aggregation | 0 | Deterministic Python |
+| Lead Review | 1 | Direct structured task |
+| Blueprint assembly and validation | 0 | Deterministic Python |
+
+This means a consultation without clarification, Market & GTM, optional
+technical specialists, or revisions has five primary model-backed tasks:
+Discovery, Product Definition, Requirements, Solution Architecture, and Lead
+Review—five tasks in total. With every optional first-pass task selected, the
+total is nine.
+
+Clarification and Lead Review revisions add work by policy:
+
+- clarification is limited to three rounds;
+- specialist revisions are limited to two;
+- technical revision cascades rerun only the target and selected downstream
+  dependants;
+- no additional Agent plans revision routing.
+
+### Current iteration and retry boundaries
+
+The relevant limits are intentionally separate:
+
+| Boundary | Current value | Effect |
+|---|---:|---|
+| Agent iterations | 4 | Maximum internal Agent turns per task |
+| CrewAI reasoning | Disabled | Prevents automatic plan/execute/observe expansion |
+| Provider retries | 2 | Up to two provider retry attempts after the initial request |
+| Task guardrail retries | 2 | Bounded correction attempts after guardrail rejection |
+| Provider request timeout | 240 seconds | Maximum wait for one provider request |
+| Agent execution timeout | 900 seconds | Maximum execution time assigned to an Agent |
+| Clarification rounds | 3 | Maximum human Discovery refinement rounds |
+| Specialist revisions | 2 | Maximum targeted review revision cycles |
+| Session Agent executions | 20 | Runtime-budget ceiling |
+| Session tokens | 120,000 | Runtime-budget ceiling |
+
+These values are ceilings, not expected counts. In a healthy direct
+structured task, the Agent should normally complete in one iteration. A
+240-second provider timeout prevents premature failure for large structured
+outputs, but it can make the worst-case failure path longer; increasing it
+does not improve normal latency.
+
+---
+
+## How latency accumulates now
+
+For a normal run, total generation latency is approximately the sum of
+sequential model tasks:
+
+```text
+Discovery
++ Product Definition
++ Requirements
++ optional Market & GTM
++ selected technical specialists
++ Lead Review
++ any correction or provider retries
+```
+
+The current Product Planning and Technical Planning Crews are sequential
+because later artifacts contain validated references to earlier artifacts.
+For example, Requirements references the Product Definition, while Security
+and QA may depend on Solution and AI decisions. This preserves consistency
+but means the stage duration is additive.
+
+The largest remaining latency contributors are:
+
+1. Large structured-output schemas and responses.
+2. Sequential dependency chains.
+3. Provider response time, especially for architecture models.
+4. Provider and guardrail retries.
+5. Optional Market, AI, Security, and QA selection.
+6. Targeted revision cycles after Lead Review.
+
+Database polling is not a material compute contributor: observed status reads
+normally complete in roughly 6–14 milliseconds. Verbose console rendering
+makes logs noisy, but the incident's major delay came from extra model calls,
+not from those GET requests.
+
+---
+
+## What has been changed so far
+
+The latency and reliability work currently includes:
+
+- `202 Accepted` mutation endpoints with background execution;
+- four-second frontend polling with active-operation text;
+- explicit pre-Crew stage checkpoints for timely progress display;
+- compact `DiscoveryRefinement` instead of full Discovery regeneration;
+- deterministic refinement-route normalization before provider-side Pydantic
+  validation;
+- explicit UUID and cross-reference instructions for Product Definition;
+- non-null HTTP trace IDs for log correlation;
+- a 240-second configurable provider timeout;
+- CrewAI reasoning disabled by default;
+- a four-iteration global Agent ceiling;
+- bounded clarification, revision, provider retry, and guardrail retry paths;
+- persisted terminal failures so the frontend cannot poll forever.
+
+The timeout increase is a reliability measure rather than a speed
+optimization. The reasoning change is the main fix for the BA incident
+because it removes unnecessary model calls instead of allowing them more time.
+
+---
+
+## What we should measure next
+
+The next optimization should be driven by stage-level measurements rather
+than another blanket timeout change. For every model-backed task, capture:
+
+- queue-to-start delay;
+- provider request duration;
+- validation and repair duration;
+- task and Crew duration;
+- input, output, cached, and reasoning tokens;
+- Agent iteration count;
+- provider retry count;
+- guardrail retry count;
+- selected model and specialist;
+- success or normalized failure category.
+
+Useful operational targets are:
+
+- p50 and p95 latency per task and Flow stage;
+- model calls per completed consultation;
+- tokens per accepted artifact;
+- percentage of tasks completing in one Agent iteration;
+- provider and guardrail retry rates;
+- clarification and revision frequency;
+- time to first visible stage update;
+- total time to blueprint.
+
+Likely follow-up improvements include compact context projections for each
+specialist, parallel execution only for genuinely independent specialists,
+smaller schema-owned outputs with deterministic assembly, and durable worker
+execution. Those changes should be evaluated against reference integrity and
+blueprint quality, not latency alone.
+
+---
+
 ## Before and after
 
-| Concern | Previous implementation | Optimized implementation |
+| Concern | Earlier implementation | Current implementation |
 |---|---|---|
 | Mutation response | Returned after Flow execution | Returns `202 Accepted` after persistence |
-| Frontend feedback | One long loading state | Polling with active-operation messages |
-| Clarification processing | Regenerated full Discovery | Generates a compact refinement |
+| Frontend feedback | One long loading state | Polling with stage checkpoints and active-operation messages |
+| Clarification processing | Regenerated full Discovery | Generates and deterministically merges a compact refinement |
 | Stable Discovery sections | Rewritten by the LLM | Preserved deterministically |
-| Clarification limit | Enforced only by state validation | Included in both prompt and state policy |
-| Background failure | Not applicable; surfaced as HTTP failure | Persisted as terminal failed state |
+| Clarification limit | Enforced only by state validation | Included in prompt and state policy; maximum three |
+| BA execution | 13-step plan/execute/observe workflow observed | Direct structured task; reasoning disabled by default |
+| Agent iteration ceiling | Up to 12 for BA | Global maximum four |
+| Background failure | Could be invisible after response | Persisted as terminal failed state |
+| HTTP correlation | Trace ID could be null | Generated or caller-supplied trace ID |
 | Refresh recovery | Depended on completed request | Reads latest persisted consultation |
 
 ---
@@ -370,3 +656,5 @@ The models still need time to think. The application no longer makes the user
 wait in the dark.
 
 ![logs](image.png)
+
+![alt text](image-1.png)

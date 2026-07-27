@@ -14,3 +14,9 @@ def get_request_id() -> str:
 
 def new_request_id() -> str:
     return str(uuid4())
+
+
+def new_trace_id() -> str:
+    """Return a W3C-compatible 128-bit trace identifier."""
+
+    return uuid4().hex

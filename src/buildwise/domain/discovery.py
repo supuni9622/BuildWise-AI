@@ -1023,6 +1023,53 @@ class DiscoveryRefinement(BuildWiseModel):
     confidence: ConfidenceLevel = ConfidenceLevel.MEDIUM
     confidence_score: NormalizedScore
 
+    @model_validator(mode="before")
+    @classmethod
+    def derive_refinement_route(cls, value: object) -> object:
+        """Normalize routing fields that are derived from blocking unknowns.
+
+        Provider-native structured output validates the response before
+        CrewAI task guardrails run. Repair the redundant routing fields here
+        so a semantically useful refinement is not discarded only because the
+        model contradicted its own ``blocking_unknown_keys``.
+        """
+
+        if not isinstance(value, dict):
+            return value
+
+        completeness = value.get("completeness")
+        if isinstance(completeness, DiscoveryCompletenessRefinement):
+            blocking_unknown_keys = completeness.blocking_unknown_keys
+        elif isinstance(completeness, dict):
+            raw_blockers = completeness.get("blocking_unknown_keys")
+            blocking_unknown_keys = (
+                raw_blockers if isinstance(raw_blockers, list) else []
+            )
+        else:
+            return value
+
+        normalized = dict(value)
+        if blocking_unknown_keys:
+            normalized["recommended_next_step"] = "request_clarification"
+            return normalized
+
+        normalized["clarification_questions"] = None
+        if normalized.get("recommended_next_step") == "request_clarification":
+            normalized["recommended_next_step"] = (
+                "continue_with_limitations"
+                if normalized.get("limitations")
+                else "continue_to_product_definition"
+            )
+        elif (
+            normalized.get("recommended_next_step")
+            == "continue_with_limitations"
+            and not normalized.get("limitations")
+        ):
+            normalized["recommended_next_step"] = (
+                "continue_to_product_definition"
+            )
+        return normalized
+
     @model_validator(mode="after")
     def validate_refinement_route(self) -> DiscoveryRefinement:
         clarification_required = bool(self.completeness.blocking_unknown_keys)

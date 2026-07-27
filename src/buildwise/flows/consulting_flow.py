@@ -134,6 +134,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
     _product_planning_crew_factory: CrewFactory = PrivateAttr()
     _technical_planning_crew_factory: CrewFactory = PrivateAttr()
     _lead_review_crew_factory: CrewFactory = PrivateAttr()
+    _flow_persistence: FlowPersistence = PrivateAttr()
 
     def __init__(
         self,
@@ -151,11 +152,13 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
         persistence: FlowPersistence | None = None,
     ) -> None:
         resolved_settings = settings or get_settings()
+        resolved_persistence = persistence or _NullFlowPersistence()
         super().__init__(
             initial_state=initial_state or BuildWiseFlowState(),
-            persistence=persistence,
+            persistence=resolved_persistence,
             tracing=resolved_settings.crewai_tracing_enabled,
         )
+        self._flow_persistence = resolved_persistence
         self._settings = resolved_settings
         self._agent_factory = agent_factory or AgentFactory(settings=resolved_settings)
         self._planner = planner or SpecialistPlanner()
@@ -197,6 +200,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
         """Execute Discovery with accumulated clarification context."""
 
         self._transition(SessionStage.DISCOVERY, SessionStatus.PROCESSING)
+        self._checkpoint_stage("discovery_started")
         intake = self._require(self.state.intake_request, "intake_request")
         clarification_context = self._clarification_context()
         previous_discovery = self.state.discovery_result
@@ -261,6 +265,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
         """Run the Product Planning Crew after the early-market decision."""
 
         self._transition(SessionStage.PRODUCT_DEFINITION, SessionStatus.PROCESSING)
+        self._checkpoint_stage("product_planning_started")
         discovery = self._require(self.state.discovery_result, "discovery_result")
         include_market = self._planner.should_include_early_market_context(discovery=discovery)
         crew = self._product_planning_crew_factory(
@@ -304,6 +309,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
         """Execute exactly the technical specialists selected by the planner."""
 
         self._transition(SessionStage.SPECIALIST_EXECUTION, SessionStatus.PROCESSING)
+        self._checkpoint_stage("technical_planning_started")
         product_planning = self._require(
             self.state.product_planning_result,
             "product_planning_result",
@@ -336,6 +342,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
         """Run the Lead Reviewer with the latest canonical aggregates."""
 
         self._transition(SessionStage.LEAD_REVIEW, SessionStatus.REVIEWING)
+        self._checkpoint_stage("lead_review_started")
         discovery = self._require(self.state.discovery_result, "discovery_result")
         product = self._require(
             self.state.product_planning_result,
@@ -686,6 +693,15 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
         )
         budget.require_totals_within_limits()
         return output
+
+    def _checkpoint_stage(self, method_name: str) -> None:
+        """Persist a stage transition before its potentially long Crew call."""
+
+        self._flow_persistence.save_state(
+            self.flow_id,
+            method_name,
+            self.state,
+        )
 
     def _transition(self, stage: SessionStage, status: SessionStatus) -> None:
         if self.state.stage is stage and self.state.status is status:

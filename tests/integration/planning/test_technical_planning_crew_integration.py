@@ -63,6 +63,8 @@ def test_technical_planning_crew_matches_specialist_plan() -> None:
     assert len(crew.tasks) == len(selected_specialists)
     assert len(crew.agents) == len(selected_specialists)
     assert crew.tracing is False
+    assert all(agent.reasoning is False for agent in crew.agents)
+    assert all(agent.max_iter == 4 for agent in crew.agents)
 
 
 def test_technical_planning_crew_excludes_unselected_specialists() -> None:
