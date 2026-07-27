@@ -365,6 +365,13 @@ class ClarificationAnswerRequest(BuildWiseModel):
         return value
 
 
+class ResolvedContextEntry(BuildWiseModel):
+    """One resolved context value carried between clarification rounds."""
+
+    key: Slug
+    value: MediumText
+
+
 class ProductIdeaContext(BuildWiseModel):
     """Canonical intake context supplied to Discovery and downstream stages.
 
@@ -380,7 +387,7 @@ class ProductIdeaContext(BuildWiseModel):
     )
     clarification_round: int = Field(default=0, ge=0)
 
-    resolved_context: dict[Slug, MediumText] = Field(default_factory=dict)
+    resolved_context: list[ResolvedContextEntry] = Field(default_factory=list)
     unresolved_context_keys: list[Slug] = Field(default_factory=list)
 
     source_metadata: list[SourceMetadata] = Field(default_factory=list)
@@ -435,7 +442,7 @@ class ProductIdeaContext(BuildWiseModel):
         if self.validated_idea.session_id != self.session_id:
             raise ValueError("validated_idea.session_id must match context session_id.")
 
-        resolved_keys = set(self.resolved_context)
+        resolved_keys = {entry.key for entry in self.resolved_context}
         unresolved_keys = set(self.unresolved_context_keys)
         overlapping_keys = resolved_keys.intersection(unresolved_keys)
 

@@ -11,6 +11,7 @@ from pydantic import (
     ConfigDict,
     Field,
     StringConstraints,
+    TypeAdapter,
     field_validator,
     model_validator,
 )
@@ -210,6 +211,13 @@ class TimestampedModel(BuildWiseModel):
 # =============================================================================
 
 
+class MetadataEntry(BuildWiseModel):
+    """One deterministic source-metadata key/value pair."""
+
+    key: ShortText
+    value: str | int | float | bool | None = None
+
+
 class SourceMetadata(BuildWiseModel):
     """Reusable provenance metadata for facts, artifacts, and recommendations.
 
@@ -223,12 +231,22 @@ class SourceMetadata(BuildWiseModel):
     source_key: ShortText
     title: ShortText | None = None
     description: MediumText | None = None
-    uri: AnyHttpUrl | None = None
+    # Keep the schema-visible type as ``str`` because OpenAI strict structured
+    # outputs rejects Pydantic's ``format: "uri"`` JSON Schema annotation.
+    # The validator below preserves the domain's HTTP(S)-URL validation.
+    uri: str | None = None
     confidence: ConfidenceLevel = ConfidenceLevel.MEDIUM
     retrieved_at: datetime | None = None
-    metadata: dict[str, str | int | float | bool | None] = Field(
-        default_factory=dict,
-    )
+    metadata: list[MetadataEntry] = Field(default_factory=list)
+
+    @field_validator("uri")
+    @classmethod
+    def validate_uri(cls, value: str | None) -> str | None:
+        """Validate source URIs without emitting an unsupported schema format."""
+
+        if value is None:
+            return None
+        return str(TypeAdapter(AnyHttpUrl).validate_python(value))
 
     @field_validator("retrieved_at")
     @classmethod

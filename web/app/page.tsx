@@ -203,6 +203,14 @@ export default function Home() {
       );
       setConsultation(result);
       setAnswers({});
+      if (result.status === "awaiting_user_input") {
+        requestAnimationFrame(() => {
+          document.querySelector(".questions-card")?.scrollIntoView({
+            behavior: "smooth",
+            block: "start",
+          });
+        });
+      }
       if (["completed", "completed_with_limitations"].includes(result.status)) {
         await loadConsultation(result.consultation_id);
       }

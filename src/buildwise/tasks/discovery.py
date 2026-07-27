@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from crewai import Agent, Task
 
+from buildwise.domain.common import SessionId
 from buildwise.domain.discovery import DiscoveryResult
 from buildwise.domain.intake import ProductIdeaContext, ProductIdeaRequest
 from buildwise.tasks.guardrails import compose_guardrails, require_pydantic_output
@@ -20,6 +21,7 @@ DEFAULT_GUARDRAIL_MAX_RETRIES = 2
 def create_discovery_task(
     *,
     agent: Agent,
+    session_id: SessionId,
     product_idea: ProductIdeaRequest,
     clarification_context: ProductIdeaContext | None = None,
     guardrail_max_retries: int = DEFAULT_GUARDRAIL_MAX_RETRIES,
@@ -29,6 +31,7 @@ def create_discovery_task(
     Args:
         agent: Native CrewAI agent created for
             ``AgentType.PRODUCT_DISCOVERY_ANALYST``.
+        session_id: Authoritative Flow session identifier.
         product_idea: Raw intake payload submitted by the user.
         clarification_context: Prior clarification answers, when Discovery
             is re-run after the Flow resumed from a clarification pause.
@@ -45,6 +48,7 @@ def create_discovery_task(
         raise ValueError("guardrail_max_retries cannot be negative.")
 
     context_lines = [f"ProductIdeaRequest: {product_idea.model_dump_json()}"]
+    context_lines.insert(0, f"Authoritative session_id: {session_id}")
 
     if clarification_context is not None:
         context_lines.append(
@@ -64,11 +68,31 @@ def create_discovery_task(
         "example standard software, AI-assisted, AI-core, RAG, agentic "
         "workflow, sensitive data, or regulated).\n"
         "- Assess intake completeness and decide whether clarification is "
-        "required before continuing.\n\n"
+        "required before continuing.\n"
+        "- Keep all cross-field decisions internally consistent:\n"
+        "  * For every unknown, set recommended_assumption to a non-null "
+        "string only when can_proceed_with_assumption=true; set it to null "
+        "when can_proceed_with_assumption=false.\n"
+        "  * If blocking_unknown_keys is non-empty, set can_continue=false "
+        "and clarification_required=true.\n"
+        "  * Every blocking unknown must have clarification_required=true.\n"
+        "  * If completeness.clarification_required=true, provide "
+        "clarification_questions and set recommended_next_step to "
+        "request_clarification.\n"
+        "  * Set percentage to exactly score multiplied by 100.\n\n"
+        "  * For each known fact whose source_type is user_provided or "
+        "clarification_answer, include at least one source_reference_id that "
+        "matches an entry in source_metadata.\n"
+        "  * For free_text, boolean, integer, and decimal clarification "
+        "questions, set options=[] and allow_other=false. Choice questions "
+        "must contain at least two unique options.\n\n"
         "Required output: A schema-valid DiscoveryResult containing "
         "known_facts, assumptions, unknowns, risks, completeness, "
         "capability_classification, and recommended_next_step.\n\n"
         "Important boundaries:\n"
+        "- Copy the authoritative session_id exactly into DiscoveryResult.session_id, "
+        "idea_context.session_id, idea_context.validated_idea.session_id, and "
+        "clarification_questions.session_id when clarification questions are present.\n"
         "- Do not ask the user questions directly; only populate "
         "clarification_questions when completeness requires them.\n"
         "- Do not select downstream specialists or make architecture "

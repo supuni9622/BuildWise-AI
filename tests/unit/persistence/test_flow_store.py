@@ -84,6 +84,7 @@ def test_flow_store_saves_and_loads_consultation_snapshot(tmp_path: Path) -> Non
     store = BuildWiseFlowStore(engine)
     consultation_id = str(uuid4())
     state = _state(consultation_id)
+    state["id"] = "crew-flow-123"
 
     store.save_state("crew-flow-123", "pause_for_clarification", state)
     loaded = store.load_state("crew-flow-123")
@@ -91,6 +92,7 @@ def test_flow_store_saves_and_loads_consultation_snapshot(tmp_path: Path) -> Non
     assert loaded is not None
     assert loaded["session_id"] == consultation_id
     assert "_flow_uuid" not in loaded
+    assert "id" not in loaded
 
     with Session(engine) as session:
         consultation = session.get(ConsultationRecord, consultation_id)

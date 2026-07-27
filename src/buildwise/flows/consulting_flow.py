@@ -14,7 +14,7 @@ from pydantic import BaseModel, PrivateAttr
 
 from buildwise.agents.factory import AgentFactory
 from buildwise.config.settings import Settings, get_settings
-from buildwise.crews.discovery import create_discovery_crew
+from buildwise.crews.discovery import bind_discovery_session, create_discovery_crew
 from buildwise.crews.lead_review import create_lead_review_crew
 from buildwise.crews.product_planning import (
     assemble_product_planning_result,
@@ -169,13 +169,17 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
         self._transition(SessionStage.DISCOVERY, SessionStatus.PROCESSING)
         intake = self._require(self.state.intake_request, "intake_request")
         crew = self._discovery_crew_factory(
+            session_id=self.state.session_id,
             product_idea=intake,
             clarification_context=self._clarification_context(),
             agent_factory=self._agent_factory,
             settings=self._settings,
         )
         output = self._kickoff(crew, stage="discovery")
-        result = self._require_output(output, DiscoveryResult, "Discovery Crew")
+        result = bind_discovery_session(
+            self._require_output(output, DiscoveryResult, "Discovery Crew"),
+            session_id=self.state.session_id,
+        )
         self.state.set_product_context(result.idea_context)
         self.state.set_discovery_result(result)
         logger.info("discovery_completed", session_id=str(self.state.session_id))

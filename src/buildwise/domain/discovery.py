@@ -108,10 +108,21 @@ class KnownFact(BuildWiseModel):
 
     key: Slug
     statement: MediumText
-    source_type: FactSourceType
+    source_type: FactSourceType = Field(
+        description=(
+            "Evidence origin. When set to user_provided or clarification_answer, "
+            "source_reference_ids must contain at least one SourceMetadata ID."
+        )
+    )
 
     confidence: ConfidenceLevel = ConfidenceLevel.HIGH
-    source_reference_ids: list[ArtifactId] = Field(default_factory=list)
+    source_reference_ids: list[ArtifactId] = Field(
+        default_factory=list,
+        description=(
+            "IDs of supporting SourceMetadata entries. Must be non-empty for "
+            "user_provided and clarification_answer facts."
+        ),
+    )
 
     confirmed_by_user: bool = False
     discovered_at: datetime = Field(default_factory=utc_now)
@@ -243,8 +254,21 @@ class Unknown(BuildWiseModel):
     blocking: bool = False
     priority: int = Field(default=3, ge=1, le=5)
 
-    can_proceed_with_assumption: bool = True
-    recommended_assumption: MediumText | None = None
+    can_proceed_with_assumption: bool = Field(
+        default=True,
+        description=(
+            "Whether downstream work may proceed using a stated assumption. "
+            "When true, recommended_assumption must be a non-null string; "
+            "when false, recommended_assumption must be null."
+        ),
+    )
+    recommended_assumption: MediumText | None = Field(
+        default=None,
+        description=(
+            "The assumption that permits progress. Must be non-null exactly "
+            "when can_proceed_with_assumption is true, and must be null when it is false."
+        ),
+    )
 
     clarification_required: bool = True
     source_reference_ids: list[ArtifactId] = Field(default_factory=list)
@@ -350,10 +374,26 @@ class CompletenessResult(BuildWiseModel):
     percentage: Percentage
 
     is_complete: bool
-    can_continue: bool
-    clarification_required: bool
+    can_continue: bool = Field(
+        description=(
+            "Whether Discovery may continue downstream. Must be false whenever "
+            "blocking_unknown_keys is non-empty."
+        )
+    )
+    clarification_required: bool = Field(
+        description=(
+            "Whether user clarification is required. Must be true whenever "
+            "blocking_unknown_keys is non-empty, and false when is_complete is true."
+        )
+    )
 
-    blocking_unknown_keys: list[Slug] = Field(default_factory=list)
+    blocking_unknown_keys: list[Slug] = Field(
+        default_factory=list,
+        description=(
+            "Keys of blocking Unknown entries. A non-empty list requires "
+            "can_continue=false and clarification_required=true."
+        ),
+    )
     non_blocking_unknown_keys: list[Slug] = Field(default_factory=list)
 
     missing_categories: list[ClarificationCategory] = Field(
@@ -438,14 +478,32 @@ class ClarificationQuestion(BuildWiseModel):
     key: Slug
     category: ClarificationCategory
     question: MediumText
-    question_type: ClarificationQuestionType = "free_text"
+    question_type: ClarificationQuestionType = Field(
+        default="free_text",
+        description=(
+            "Question input type. Only single_choice and multiple_choice may "
+            "have non-empty options or allow_other=true."
+        ),
+    )
 
     rationale: MediumText
     required: bool = True
     priority: int = Field(default=3, ge=1, le=5)
 
-    options: list[ShortText] = Field(default_factory=list)
-    allow_other: bool = False
+    options: list[ShortText] = Field(
+        default_factory=list,
+        description=(
+            "Selectable answers. Provide at least two only for single_choice "
+            "or multiple_choice; otherwise this must be an empty list."
+        ),
+    )
+    allow_other: bool = Field(
+        default=False,
+        description=(
+            "Whether a choice question accepts another answer. Must be false "
+            "unless question_type is single_choice or multiple_choice."
+        ),
+    )
 
     related_unknown_ids: list[ArtifactId] = Field(min_length=1)
     affected_areas: list[UnknownImpactArea] = Field(default_factory=list)
@@ -580,6 +638,25 @@ class ClarificationQuestionSet(BuildWiseModel):
         return self
 
 
+class SpecialistSignals(BuildWiseModel):
+    """Fixed specialist-routing signals supported by Discovery."""
+
+    market_analysis_required: bool = False
+    competitor_analysis_required: bool = False
+    pricing_strategy_required: bool = False
+    launch_strategy_required: bool = False
+    unvalidated_commercial_assumptions: bool = False
+    evidence_backed_positioning_required: bool = False
+    competitive_category: bool = False
+    investor_ready_blueprint_requested: bool = False
+
+    def get(self, key: str, default: bool = False) -> bool:
+        """Provide mapping-style reads for deterministic selection policies."""
+
+        value = getattr(self, key, default)
+        return value if isinstance(value, bool) else default
+
+
 class CapabilityClassification(BuildWiseModel):
     """Classification of product capabilities detected during Discovery."""
 
@@ -601,7 +678,7 @@ class CapabilityClassification(BuildWiseModel):
     real_time_processing_required: bool = False
     external_integrations_expected: bool = False
 
-    specialist_signals: dict[Slug, bool] = Field(default_factory=dict)
+    specialist_signals: SpecialistSignals = Field(default_factory=SpecialistSignals)
     evidence_reference_ids: list[ArtifactId] = Field(default_factory=list)
 
     classified_at: datetime = Field(default_factory=utc_now)

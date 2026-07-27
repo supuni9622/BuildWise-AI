@@ -30,7 +30,7 @@ from buildwise.flows.state import FlowRuntimeLimits
 
 # Structured, boolean-valued Discovery signals that justify pulling Market &
 # GTM work earlier into the Product Planning Crew. These are read from
-# ``CapabilityClassification.specialist_signals`` (a ``dict[Slug, bool]``),
+# ``CapabilityClassification.specialist_signals`` (a slug-validated boolean mapping),
 # never from raw prompt or narrative text.
 _MARKET_CONTEXT_SIGNAL_KEYS = (
     "market_analysis_required",

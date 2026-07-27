@@ -116,6 +116,10 @@ class BuildWiseFlowStore(FlowPersistence):
     def _public_state(state_data: dict[str, Any]) -> dict[str, Any]:
         state = dict(state_data)
         state.pop("_flow_uuid", None)
+        # CrewAI injects its runtime Flow UUID as a top-level ``id`` when it
+        # checkpoints state. BuildWiseFlowState deliberately has no such
+        # domain field, so omit it when reconstructing a persisted session.
+        state.pop("id", None)
         return state
 
     @staticmethod
