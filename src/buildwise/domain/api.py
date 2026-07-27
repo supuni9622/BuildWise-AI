@@ -38,6 +38,7 @@ class ConsultationResponse(BaseModel):
     stage: SessionStage
     clarification_round: int = Field(ge=0)
     questions: list[ClarificationQuestion] = Field(default_factory=list)
+    active_operation: str | None = None
 
 
 class ConsultationResultResponse(BaseModel):

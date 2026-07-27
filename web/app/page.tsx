@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Question = {
   id: string;
@@ -20,6 +20,7 @@ type Consultation = {
   stage: string;
   clarification_round: number;
   questions: Question[];
+  active_operation?: string | null;
 };
 
 type BlueprintSection = {
@@ -84,6 +85,7 @@ export default function Home() {
   const [error, setError] = useState("");
   const [answers, setAnswers] = useState<Record<string, string | string[] | boolean>>({});
   const [activeSection, setActiveSection] = useState("");
+  const pollGeneration = useRef(0);
   const [idea, setIdea] = useState({
     title: "",
     idea: "",
@@ -135,9 +137,11 @@ export default function Home() {
   }
 
   async function loadConsultation(id: string, base = apiBase) {
+    const generation = pollGeneration.current;
     try {
       setError("");
       const current = await request<Consultation>(`/consultations/${id}`, undefined, base);
+      if (generation !== pollGeneration.current) return;
       setConsultation(current);
       if (["completed", "completed_with_limitations"].includes(current.status)) {
         const result = await request<{ result: Blueprint }>(`/consultations/${id}/result`, undefined, base);
@@ -145,6 +149,7 @@ export default function Home() {
         setActiveSection(result.result.sections[0]?.section || "");
       }
     } catch (caught) {
+      if (generation !== pollGeneration.current) return;
       setError(caught instanceof Error ? caught.message : "Unable to load the consultation.");
       if ((caught as Error).message.toLowerCase().includes("not found")) {
         localStorage.removeItem("buildwise-consultation");
@@ -222,6 +227,7 @@ export default function Home() {
   }
 
   function reset() {
+    pollGeneration.current += 1;
     localStorage.removeItem("buildwise-consultation");
     setConsultation(null);
     setBlueprint(null);
@@ -383,7 +389,7 @@ export default function Home() {
             ) : consultation.status === "failed" ? (
               <div className="state-card"><div className="state-symbol error">!</div><h1>The consultation stopped.</h1><p>{error || "The planning flow could not complete. Start a new consultation or check the API logs."}</p><button className="primary" onClick={reset}>Start again</button></div>
             ) : (
-              <div className="state-card"><div className="orbit"><i /><i /><i /><span>W</span></div><span className="eyebrow">Specialists at work</span><h1>{stageLabels[consultation.stage] || pretty(consultation.stage)}</h1><p>BuildWise is coordinating the next planning stage. This page updates automatically.</p><div className="activity-line"><span /> Reviewing structured outputs and dependencies</div></div>
+              <div className="state-card"><div className="orbit"><i /><i /><i /><span>W</span></div><span className="eyebrow">Specialists at work</span><h1>{stageLabels[consultation.stage] || pretty(consultation.stage)}</h1><p>BuildWise is coordinating the next planning stage. This page updates automatically.</p><div className="activity-line"><span /> {consultation.active_operation || "Reviewing structured outputs and dependencies"}</div></div>
             )}
           </div>
         </section>

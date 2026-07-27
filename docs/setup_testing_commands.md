@@ -88,12 +88,23 @@ Copy the committed environment template:
 cp .env.example .env
 ```
 
-Open `.env` and add the required provider keys:
+Open `.env` and add the provider and research keys you intend to use:
 
 ```env
 OPENAI_API_KEY=your-openai-api-key
 ANTHROPIC_API_KEY=your-anthropic-api-key
+SERPER_API_KEY=your-serper-api-key
 ```
+
+`SERPER_API_KEY` enables the Market & GTM Strategist's `web_search` tool.
+Create a key through the [Serper API dashboard](https://serper.dev/), add it
+to `.env`, and restart the backend so the agent factory reads the new
+environment value.
+
+If `SERPER_API_KEY` is omitted, BuildWise can still complete a consultation,
+but live market and competitor research is unavailable. The Market & GTM
+output will record the missing research as an evidence gap or limitation
+instead of fabricating external evidence.
 
 For initial development, keep Claude evaluation disabled:
 

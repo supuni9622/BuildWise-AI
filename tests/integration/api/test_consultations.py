@@ -109,17 +109,18 @@ def test_consultation_http_lifecycle(tmp_path: Path) -> None:
             json={"idea": "I want to build an AI platform that helps small shops."},
         )
 
-        assert started.status_code == 201
+        assert started.status_code == 202
         start_payload = started.json()
         consultation_id = start_payload["consultation_id"]
-        question_id = start_payload["questions"][0]["id"]
-        assert start_payload["status"] == "awaiting_user_input"
-        assert start_payload["stage"] == "clarification"
-        assert start_payload["clarification_round"] == 1
+        assert start_payload["status"] == "created"
+        assert start_payload["active_operation"] == "Queued for discovery"
 
         status_response = client.get(f"/api/v1/consultations/{consultation_id}")
         assert status_response.status_code == 200
-        assert status_response.json()["questions"][0]["id"] == question_id
+        status_payload = status_response.json()
+        question_id = status_payload["questions"][0]["id"]
+        assert status_payload["status"] == "awaiting_user_input"
+        assert status_payload["clarification_round"] == 1
 
         pending_result = client.get(f"/api/v1/consultations/{consultation_id}/result")
         assert pending_result.status_code == 409
@@ -140,10 +141,12 @@ def test_consultation_http_lifecycle(tmp_path: Path) -> None:
                 "answers": [{"question_id": question_id, "answer": "Independent grocers."}],
             },
         )
-        assert resumed.status_code == 200
-        assert resumed.json()["status"] == "completed"
+        assert resumed.status_code == 202
+        assert resumed.json()["status"] == "resuming"
         assert resumed.json()["questions"] == []
 
+        completed = client.get(f"/api/v1/consultations/{consultation_id}")
+        assert completed.json()["status"] == "completed"
         result = client.get(f"/api/v1/consultations/{consultation_id}/result")
         assert result.status_code == 200
         assert result.json()["result"]["title"] == "Small-shop AI platform"
@@ -177,11 +180,12 @@ def test_consultation_endpoints_return_not_found(tmp_path: Path) -> None:
 
 def test_service_rejects_answers_outside_active_question_set(tmp_path: Path) -> None:
     service, _ = _service(tmp_path)
-    started = service.start(
+    started = service.enqueue_start(
         StartConsultationRequest(
             idea="I want to build an AI platform that helps small shops."
         )
     )
+    service.run(started.consultation_id)
 
     request = SubmitClarificationsRequest(
         clarification_round=1,
@@ -194,4 +198,4 @@ def test_service_rejects_answers_outside_active_question_set(tmp_path: Path) -> 
     )
 
     with pytest.raises(ValueError, match="outside the active set"):
-        service.submit_clarifications(started.consultation_id, request)
+        service.enqueue_clarifications(started.consultation_id, request)

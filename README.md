@@ -123,6 +123,22 @@ uv run uvicorn buildwise.main:app \
   --port 8080
 ```
 
+Add the provider and research credentials to `.env` before starting the
+backend:
+
+```env
+OPENAI_API_KEY=your-openai-api-key
+SERPER_API_KEY=your-serper-api-key
+```
+
+Create a Serper key at [serper.dev](https://serper.dev/).
+`SERPER_API_KEY` enables live web and competitor research for the Market &
+GTM Strategist. Restart the backend after adding or changing the key.
+
+Serper is optional for the overall workflow. Without it, BuildWise continues
+with an explicit market-research evidence gap instead of using live web
+search.
+
 ## Frontend
 
 Keep the backend running on port `8080`. In a second terminal, run:

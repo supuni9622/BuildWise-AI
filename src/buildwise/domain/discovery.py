@@ -455,8 +455,15 @@ class CompletenessResult(BuildWiseModel):
         if self.is_complete and self.score < self.threshold:
             raise ValueError("is_complete cannot be true when score is below threshold.")
 
-        if not self.is_complete and self.score >= self.threshold:
-            raise ValueError("is_complete must be true when score meets the threshold.")
+        if (
+            not self.is_complete
+            and self.score >= self.threshold
+            and not self.blocking_unknown_keys
+        ):
+            raise ValueError(
+                "is_complete must be true when score meets the threshold "
+                "and no blocking unknowns remain."
+            )
 
         if self.blocking_unknown_keys and self.can_continue:
             raise ValueError("can_continue cannot be true while blocking unknowns remain.")
@@ -946,4 +953,93 @@ class DiscoveryResult(BuildWiseModel):
                 f"A discovery key cannot be both a known fact and an assumption: {formatted}."
             )
 
+        return self
+
+
+class DiscoveryCompletenessRefinement(BuildWiseModel):
+    """Evidence fields used to derive a consistent completeness decision."""
+
+    score: NormalizedScore
+    blocking_unknown_keys: list[Slug] = Field(default_factory=list)
+    non_blocking_unknown_keys: list[Slug] = Field(default_factory=list)
+    missing_categories: list[ClarificationCategory] = Field(default_factory=list)
+    satisfied_categories: list[ClarificationCategory] = Field(default_factory=list)
+    rationale: MediumText
+    threshold: NormalizedScore = 0.75
+    evaluated_at: datetime = Field(default_factory=utc_now)
+
+    @classmethod
+    def from_result(
+        cls,
+        result: CompletenessResult,
+    ) -> DiscoveryCompletenessRefinement:
+        """Extract only non-derived completeness evidence from a full result."""
+
+        return cls(
+            score=result.score,
+            blocking_unknown_keys=result.blocking_unknown_keys,
+            non_blocking_unknown_keys=result.non_blocking_unknown_keys,
+            missing_categories=result.missing_categories,
+            satisfied_categories=result.satisfied_categories,
+            rationale=result.rationale,
+            threshold=result.threshold,
+            evaluated_at=result.evaluated_at,
+        )
+
+    def to_result(self) -> CompletenessResult:
+        """Derive decision booleans and percentage without LLM discretion."""
+
+        has_blockers = bool(self.blocking_unknown_keys)
+        is_complete = self.score >= self.threshold and not has_blockers
+        return CompletenessResult(
+            score=self.score,
+            percentage=self.score * 100,
+            is_complete=is_complete,
+            can_continue=not has_blockers,
+            clarification_required=has_blockers,
+            blocking_unknown_keys=self.blocking_unknown_keys,
+            non_blocking_unknown_keys=self.non_blocking_unknown_keys,
+            missing_categories=self.missing_categories,
+            satisfied_categories=self.satisfied_categories,
+            rationale=self.rationale,
+            threshold=self.threshold,
+            evaluated_at=self.evaluated_at,
+        )
+
+
+class DiscoveryRefinement(BuildWiseModel):
+    """Small clarification-time update merged into an accepted DiscoveryResult."""
+
+    unknowns: list[Unknown] = Field(default_factory=list)
+    completeness: DiscoveryCompletenessRefinement
+    clarification_questions: ClarificationQuestionSet | None = None
+    recommended_next_step: Literal[
+        "request_clarification",
+        "continue_to_product_definition",
+        "continue_with_limitations",
+        "fail_discovery",
+    ]
+    limitations: list[MediumText] = Field(default_factory=list)
+    confidence: ConfidenceLevel = ConfidenceLevel.MEDIUM
+    confidence_score: NormalizedScore
+
+    @model_validator(mode="after")
+    def validate_refinement_route(self) -> DiscoveryRefinement:
+        clarification_required = bool(self.completeness.blocking_unknown_keys)
+        if clarification_required:
+            if self.clarification_questions is None:
+                raise ValueError(
+                    "clarification_questions are required when refinement "
+                    "requires clarification."
+                )
+            if self.recommended_next_step != "request_clarification":
+                raise ValueError(
+                    "A refinement requiring clarification must request clarification."
+                )
+        elif self.recommended_next_step == "request_clarification":
+            raise ValueError(
+                "Clarification cannot be requested when it is not required."
+            )
+        if self.recommended_next_step == "continue_with_limitations" and not self.limitations:
+            raise ValueError("continue_with_limitations requires at least one limitation.")
         return self

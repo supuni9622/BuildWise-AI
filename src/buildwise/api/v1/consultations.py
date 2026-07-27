@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from starlette.concurrency import run_in_threadpool
 
 from buildwise.api.v1.consultation_service import ConsultationService
@@ -37,30 +37,37 @@ ConsultationServiceDependency = Annotated[
 @router.post(
     "",
     response_model=ConsultationResponse,
-    status_code=status.HTTP_201_CREATED,
+    status_code=status.HTTP_202_ACCEPTED,
 )
 async def start_consultation(
     request: StartConsultationRequest,
+    background_tasks: BackgroundTasks,
     service: ConsultationServiceDependency,
 ) -> ConsultationResponse:
-    return await run_in_threadpool(service.start, request)
+    response = await run_in_threadpool(service.enqueue_start, request)
+    background_tasks.add_task(service.run, response.consultation_id)
+    return response
 
 
 @router.post(
     "/{consultation_id}/clarifications",
     response_model=ConsultationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
 )
 async def submit_clarifications(
     consultation_id: str,
     request: SubmitClarificationsRequest,
+    background_tasks: BackgroundTasks,
     service: ConsultationServiceDependency,
 ) -> ConsultationResponse:
     try:
-        return await run_in_threadpool(
-            service.submit_clarifications,
+        response = await run_in_threadpool(
+            service.enqueue_clarifications,
             consultation_id,
             request,
         )
+        background_tasks.add_task(service.run, consultation_id)
+        return response
     except LookupError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
     except ValueError as error:

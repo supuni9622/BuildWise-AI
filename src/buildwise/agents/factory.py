@@ -22,6 +22,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Protocol
 
+import structlog
 from crewai import LLM, Agent
 from crewai.tools import BaseTool
 
@@ -31,8 +32,14 @@ from buildwise.agents.registry import (
     AgentContractRegistry,
 )
 from buildwise.config.settings import Settings, get_settings
-from buildwise.domain.enums import AgentType, ModelTier
-from buildwise.tools.registry import TOOL_REGISTRY, ToolRegistry
+from buildwise.domain.enums import AgentFailureBehavior, AgentType, ModelTier
+from buildwise.tools.registry import (
+    TOOL_REGISTRY,
+    ToolConfigurationError,
+    ToolRegistry,
+)
+
+logger = structlog.get_logger(__name__)
 
 
 class AgentFactoryError(RuntimeError):
@@ -278,7 +285,23 @@ class AgentFactory:
     ) -> list[BaseTool]:
         """Resolve official CrewAI tools requested by an agent contract."""
 
-        return self._tool_registry.resolve_many(contract.capabilities.tool_keys)
+        tools: list[BaseTool] = []
+        for key in contract.capabilities.tool_keys:
+            try:
+                tools.append(self._tool_registry.resolve(key))
+            except ToolConfigurationError as error:
+                if (
+                    contract.failure_behavior
+                    is not AgentFailureBehavior.CONTINUE_WITH_LIMITATION
+                ):
+                    raise
+                logger.warning(
+                    "optional_agent_tool_unavailable",
+                    agent=contract.key,
+                    tool=str(key),
+                    reason=str(error),
+                )
+        return tools
 
     def _resolve_skills(
         self,

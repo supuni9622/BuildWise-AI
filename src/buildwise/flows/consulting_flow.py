@@ -14,7 +14,11 @@ from pydantic import BaseModel, PrivateAttr
 
 from buildwise.agents.factory import AgentFactory
 from buildwise.config.settings import Settings, get_settings
-from buildwise.crews.discovery import bind_discovery_session, create_discovery_crew
+from buildwise.crews.discovery import (
+    bind_discovery_session,
+    create_discovery_crew,
+    merge_discovery_refinement,
+)
 from buildwise.crews.lead_review import create_lead_review_crew
 from buildwise.crews.product_planning import (
     assemble_product_planning_result,
@@ -26,7 +30,7 @@ from buildwise.crews.technical_planning import (
 )
 from buildwise.domain.blueprint import ProductBlueprint
 from buildwise.domain.common import WarningMessage, generate_uuid
-from buildwise.domain.discovery import DiscoveryResult
+from buildwise.domain.discovery import DiscoveryRefinement, DiscoveryResult
 from buildwise.domain.enums import (
     ReviewDecision,
     SessionStage,
@@ -168,18 +172,38 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
 
         self._transition(SessionStage.DISCOVERY, SessionStatus.PROCESSING)
         intake = self._require(self.state.intake_request, "intake_request")
+        clarification_context = self._clarification_context()
+        previous_discovery = self.state.discovery_result
         crew = self._discovery_crew_factory(
             session_id=self.state.session_id,
             product_idea=intake,
-            clarification_context=self._clarification_context(),
+            clarification_context=clarification_context,
+            previous_discovery=previous_discovery,
+            maximum_clarification_rounds=self.state.limits.maximum_clarification_rounds,
             agent_factory=self._agent_factory,
             settings=self._settings,
         )
         output = self._kickoff(crew, stage="discovery")
-        result = bind_discovery_session(
-            self._require_output(output, DiscoveryResult, "Discovery Crew"),
-            session_id=self.state.session_id,
-        )
+        if previous_discovery is not None and clarification_context is not None:
+            if isinstance(output.pydantic, DiscoveryRefinement):
+                result = merge_discovery_refinement(
+                    previous_discovery,
+                    clarification_context,
+                    output.pydantic,
+                    session_id=self.state.session_id,
+                )
+            else:
+                # Preserve compatibility with injected Crew doubles and
+                # previously configured custom Discovery crews.
+                result = bind_discovery_session(
+                    self._require_output(output, DiscoveryResult, "Discovery Crew"),
+                    session_id=self.state.session_id,
+                )
+        else:
+            result = bind_discovery_session(
+                self._require_output(output, DiscoveryResult, "Discovery Crew"),
+                session_id=self.state.session_id,
+            )
         self.state.set_product_context(result.idea_context)
         self.state.set_discovery_result(result)
         logger.info("discovery_completed", session_id=str(self.state.session_id))
