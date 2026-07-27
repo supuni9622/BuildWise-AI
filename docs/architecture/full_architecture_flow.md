@@ -207,7 +207,6 @@ The workflow is designed to remain production-minded without introducing unneces
 │ - Market Analyst                                             │
 │ - AI Architect                                               │
 │ - Security Architect                                         │
-│ - Engineering Lead                                           │
 │ - QA and Evaluation Architect                                │
 └──────────────────────────────────────────────────────────────┘
                                 │
@@ -234,13 +233,6 @@ The workflow is designed to remain production-minded without introducing unneces
 │ - External integrations exist                                │
 │ - Autonomous actions exist                                   │
 │ - Regulated domains are involved                             │
-│                                                              │
-│ Run Engineering Lead when:                                   │
-│                                                              │
-│ - Delivery complexity is high                                │
-│ - Integration complexity is high                             │
-│ - Migration constraints exist                                │
-│ - Maintainability requires separate review                   │
 │                                                              │
 │ Run QA and Evaluation Architect when:                        │
 │                                                              │
@@ -344,24 +336,23 @@ The workflow is designed to remain production-minded without introducing unneces
 │ Reliability      │  │ Fallbacks        │    │ Abuse Risks      │
 └──────────────────┘  └──────────────────┘    └──────────────────┘
 
-        ┌───────────────────────┼────────────────────────┐
-        │                       │                        │
-        ▼                       ▼                        ▼
-┌──────────────────┐  ┌──────────────────┐    ┌──────────────────┐
-│ Engineering      │  │ QA and           │    │ Market Analyst   │
-│ Lead             │  │ Evaluation       │    │ Conditional      │
-│ Conditional      │  │ Architect        │    │                  │
-└──────────────────┘  └──────────────────┘    └──────────────────┘
-        │                       │                        │
-        ▼                       ▼                        ▼
-┌──────────────────┐  ┌──────────────────┐    ┌──────────────────┐
-│ Delivery Plan    │  │ Test Strategy    │    │ Market Context   │
-│ Dependencies     │  │ AI Evaluation    │    │ Competitors      │
-│ Complexity       │  │ Quality Metrics  │    │ Trends           │
-│ Maintainability  │  │ Safety Tests     │    │ Positioning      │
-│ Tech Debt        │  │ Failure Tests    │    │ Differentiation  │
-│ Team Skills      │  │ Acceptance Plan  │    │ Market Risks     │
-└──────────────────┘  └──────────────────┘    └──────────────────┘
+        ┌───────────────────────┴────────────────────────┐
+        │                                                │
+        ▼                                                ▼
+┌────────────────────────────┐              ┌────────────────────────────┐
+│ QA and Evaluation          │              │ Market Analyst             │
+│ Architect                  │              │ Conditional                │
+└────────────────────────────┘              └────────────────────────────┘
+              │                                          │
+              ▼                                          ▼
+┌────────────────────────────┐              ┌────────────────────────────┐
+│ Test Strategy              │              │ Market Context             │
+│ AI Evaluation              │              │ Competitors                │
+│ Quality Metrics            │              │ Trends                     │
+│ Safety Tests               │              │ Positioning                │
+│ Failure Tests              │              │ Differentiation            │
+│ Acceptance Plan            │              │ Market Risks               │
+└────────────────────────────┘              └────────────────────────────┘
                                 │
                                 ▼
 ┌──────────────────────────────────────────────────────────────┐
@@ -661,7 +652,6 @@ The workflow is designed to remain production-minded without introducing unneces
 │ - Market Analyst                                             │
 │ - AI Architect                                               │
 │ - Security Architect                                         │
-│ - Engineering Lead                                           │
 │ - QA and Evaluation Architect                                │
 │ - Lead Reviewer                                              │
 └──────────────────────────────────────────────────────────────┘
@@ -734,7 +724,6 @@ Crews are responsible for:
 * Security analysis
 * Market analysis
 * Quality and evaluation planning
-* Engineering feasibility
 * Review and synthesis
 
 Crews should not control API sessions, rate limits, persistence, or HTTP lifecycle behavior.
@@ -1673,8 +1662,6 @@ flowchart TD
 
         SECURITY_DECISION{"Sensitive data,<br/>external integrations,<br/>autonomous actions or<br/>regulated domain?"}
 
-        ENGINEERING_DECISION{"High delivery,<br/>migration, integration or<br/>maintainability complexity?"}
-
         QA_DECISION{"Complex acceptance,<br/>AI evaluation, safety or<br/>reliability requirements?"}
 
         SELECT_MARKET["Select Market Analyst"]
@@ -1685,9 +1672,6 @@ flowchart TD
 
         SELECT_SECURITY["Select Security Architect"]
         SKIP_SECURITY["Skip Security Architect"]
-
-        SELECT_ENGINEERING["Select Engineering Lead"]
-        SKIP_ENGINEERING["Skip Engineering Lead"]
 
         SELECT_QA["Select QA and Evaluation Architect"]
         SKIP_QA["Skip QA and Evaluation Architect"]
@@ -1741,14 +1725,8 @@ flowchart TD
     SECURITY_DECISION -- Yes --> SELECT_SECURITY
     SECURITY_DECISION -- No --> SKIP_SECURITY
 
-    SELECT_SECURITY --> ENGINEERING_DECISION
-    SKIP_SECURITY --> ENGINEERING_DECISION
-
-    ENGINEERING_DECISION -- Yes --> SELECT_ENGINEERING
-    ENGINEERING_DECISION -- No --> SKIP_ENGINEERING
-
-    SELECT_ENGINEERING --> QA_DECISION
-    SKIP_ENGINEERING --> QA_DECISION
+    SELECT_SECURITY --> QA_DECISION
+    SKIP_SECURITY --> QA_DECISION
 
     QA_DECISION -- Yes --> SELECT_QA
     QA_DECISION -- No --> SKIP_QA
@@ -1867,15 +1845,6 @@ flowchart TD
         • Abuse prevention<br/>
         • AI security"]
 
-        ENGINEERING_SELECTED{"Engineering Lead selected?"}
-        ENGINEERING_LEAD["Engineering Lead<br/><br/>
-        • Delivery feasibility<br/>
-        • Dependencies<br/>
-        • Team skills<br/>
-        • Maintainability<br/>
-        • Technical debt<br/>
-        • Implementation phases"]
-
         QA_SELECTED{"QA Architect selected?"}
         QA_ARCHITECT["QA and Evaluation Architect<br/><br/>
         • Test strategy<br/>
@@ -1888,7 +1857,6 @@ flowchart TD
         MARKET_SKIP_NODE["Market analysis skipped"]
         AI_SKIP_NODE["AI architecture skipped"]
         SECURITY_SKIP_NODE["Security covered by<br/>Solution Architect baseline"]
-        ENGINEERING_SKIP_NODE["Engineering review skipped"]
         QA_SKIP_NODE["QA covered by<br/>baseline test strategy"]
 
         TOOL_POLICY["Controlled Tool Layer<br/><br/>
@@ -1950,10 +1918,6 @@ flowchart TD
     SECURITY_SELECTED -- Yes --> SECURITY_ARCHITECT
     SECURITY_SELECTED -- No --> SECURITY_SKIP_NODE
 
-    PRODUCT_READY --> ENGINEERING_SELECTED
-    ENGINEERING_SELECTED -- Yes --> ENGINEERING_LEAD
-    ENGINEERING_SELECTED -- No --> ENGINEERING_SKIP_NODE
-
     PRODUCT_READY --> QA_SELECTED
     QA_SELECTED -- Yes --> QA_ARCHITECT
     QA_SELECTED -- No --> QA_SKIP_NODE
@@ -1962,7 +1926,6 @@ flowchart TD
     MARKET_ANALYST --> TOOL_REQUIRED
     AI_ARCHITECT --> TOOL_REQUIRED
     SECURITY_ARCHITECT --> TOOL_REQUIRED
-    ENGINEERING_LEAD --> TOOL_REQUIRED
     QA_ARCHITECT --> TOOL_REQUIRED
 
     TOOL_REQUIRED -- Yes --> TOOL_POLICY
@@ -1996,7 +1959,6 @@ flowchart TD
     MARKET_SKIP_NODE --> AGGREGATE_SPECIALISTS
     AI_SKIP_NODE --> AGGREGATE_SPECIALISTS
     SECURITY_SKIP_NODE --> AGGREGATE_SPECIALISTS
-    ENGINEERING_SKIP_NODE --> AGGREGATE_SPECIALISTS
     QA_SKIP_NODE --> AGGREGATE_SPECIALISTS
 
     %% =========================================================
@@ -2055,7 +2017,6 @@ flowchart TD
     MARKET_ANALYST -.-> USAGE_TRACKER
     AI_ARCHITECT -.-> USAGE_TRACKER
     SECURITY_ARCHITECT -.-> USAGE_TRACKER
-    ENGINEERING_LEAD -.-> USAGE_TRACKER
     QA_ARCHITECT -.-> USAGE_TRACKER
     TOOL_EXECUTE -.-> USAGE_TRACKER
 

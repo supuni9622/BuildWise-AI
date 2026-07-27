@@ -570,7 +570,6 @@ invalid inputs produce clear validation errors
 all agent outputs can be serialized
 every agent has a distinct contract
 no agent has undefined or overlapping ownership
-the removed Engineering Lead role does not exist
 cost-related fields are distributed across Product, Architecture, AI, QA, Security, and GTM outputs
 
 Phase 2 — Discovery Flow

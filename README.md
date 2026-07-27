@@ -37,7 +37,6 @@ Roles:
 - Solution Architect
 - AI Architect
 - Security Architect
-- Engineering Lead
 - QA Architect
 - Market Analyst
 - Lead Reviewer

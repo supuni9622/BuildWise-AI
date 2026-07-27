@@ -198,7 +198,6 @@ Session budget controls.
 - Market Analyst
 - AI Architect
 - Security Architect
-- Engineering Lead
 - QA Architect
 
 ---

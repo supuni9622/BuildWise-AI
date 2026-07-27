@@ -206,7 +206,6 @@ Output shape. Same legend: ✅ Built · 🟡 Partial · 🔴 Missing.
 | AI Architect | Conditional | ✅ Built | `agents/ai_architect.py` |
 | Security Architect | Conditional | ✅ Built | `agents/security_architect.py` |
 | QA Architect | Conditional | ✅ Built (renamed) | `agents/qa_evaluation_architect.py` — same role, different key |
-| Engineering Lead | Conditional | 🔴 Missing | No agent contract, no `AgentType` enum value, no task/crew references this role anywhere in the codebase |
 
 ## CrewAI Features Utilized
 
@@ -255,13 +254,10 @@ them (see FR5/FR6 above) — this table compares model *shape* only.
    `_validate_required_agent_set()` still doesn't include it among the core
    agents. The live Flow follows the planner, so the registry metadata should
    be reconciled with the execution behavior.
-2. **"Engineering Lead" agent is entirely unbuilt** — no contract, enum
-   value, task, or Crew reference exists. Needs a PRD-vs-scope decision: build
-   it, or update `prd.md` to drop it.
-3. **Prompt Injection Protection is unimplemented** — the PRD calls it out
+2. **Prompt Injection Protection is unimplemented** — the PRD calls it out
    explicitly under Security, and nothing in `tasks/` or `domain/intake.py`
    addresses it beyond standard Pydantic schema validation.
-4. **"Open Questions" has no home** in the current blueprint model — every
+3. **"Open Questions" has no home** in the current blueprint model — every
    other PRD section maps onto an existing `BlueprintSectionType` (sometimes
    renamed/merged); this one doesn't.
 
@@ -296,8 +292,7 @@ further alignment work.
 
 | Conflict | `crewai_runtime_architecture.md` | `full_architecture_flow.md` | `prds/05_specialist_planner.md` (implemented) | Status |
 |---|---|---|---|---|
-| Market & GTM Strategist selection | §6.6: **"Always included"** alongside Solution Architect and Lead Reviewer, decided in the same specialist-planning stage as AI/Security/QA | Conditional (`MARKET_DECISION` node), decided in the *same* single "Specialist Planning" stage as AI/Security/QA/Engineering Lead — no separate early stage | Conditional, decided by a **separate, earlier** `should_include_early_market_context()` policy *before* the Product Planning Crew is built, and explicitly **forbidden** from ever appearing in the later Technical Planning `SpecialistExecutionPlan` | 🔴 Three-way conflict | The implementation (`src/buildwise/planning/`) follows the third model. It also fixed a bug where `flows/routing.py`'s old code literally implemented the first model (force-including Market & GTM as `required=True` in the *technical* plan) — see build-order item 1 above. All three documents need to agree on one timing model |
-| "Engineering Lead" specialist | §8 Agent Responsibility Matrix does **not** list Engineering Lead at all | Lists it as a full conditional specialist with its own routing rule (`ENGINEERING_DECISION`) and deliverables (delivery plan, dependencies, complexity, maintainability, tech debt, team skills) | `SpecialistType` enum has exactly 5 members (Market & GTM, Solution, AI, Security, QA) — **no Engineering Lead**, matching `prd.md`'s gap noted above but contradicting `full_architecture_flow.md` | 🔴 Conflict | Same underlying gap as "Key misalignments" item 2 above, now sourced from a second document. No `AgentType`/`SpecialistType` enum value, contract, task, or Crew exists for it anywhere |
+| Market & GTM Strategist selection | §6.6: **"Always included"** alongside Solution Architect and Lead Reviewer, decided in the same specialist-planning stage as AI/Security/QA | Conditional (`MARKET_DECISION` node), decided in the *same* single "Specialist Planning" stage as AI/Security/QA — no separate early stage | Conditional, decided by a **separate, earlier** `should_include_early_market_context()` policy *before* the Product Planning Crew is built, and explicitly **forbidden** from ever appearing in the later Technical Planning `SpecialistExecutionPlan` | 🔴 Three-way conflict | The implementation (`src/buildwise/planning/`) follows the third model. It also fixed a bug where `flows/routing.py`'s old code literally implemented the first model (force-including Market & GTM as `required=True` in the *technical* plan) — see build-order item 1 above. All three documents need to agree on one timing model |
 | Solution Architect invocation mode | Implicitly "always runs" (`full_architecture_flow.md` diagram: "Always Runs") | Same | Planner always selects it with `required=True` and rejects exclusion | ✅ Agreement | All three agree Solution Architect is mandatory; only `agents/registry.py`'s `invocation_mode=CONDITIONAL` disagrees (see "Key misalignments" item 1) |
 
 ## Security & guardrail depth
