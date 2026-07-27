@@ -45,7 +45,7 @@ Actor → Frontend → FastAPI validation → BuildWise CrewAI Flow
 | Lead Review Crew | ✅ Built | `crews/lead_review.py` + `tasks/lead_review.py` |
 | approved → blueprint | ✅ Built | The live review router handles `APPROVED` and `APPROVED_WITH_LIMITATIONS`, verifies `approved_for_blueprint`, and invokes `BlueprintAssembler` by default while retaining the injectable `BlueprintBuilder` boundary |
 | revisions → rerun affected planning Crew | ✅ Built | `flows/revisions.py` deterministically maps Product Definition, Requirements, and Market & GTM to the Product Planning Crew, and Solution, AI, Security, and QA revisions to the Technical Planning Crew. Technical revisions rerun only the target plus selected downstream dependants (Solution → selected AI/Security/QA; AI → selected Security/QA; Security → selected QA; QA only). The Flow retains revision history and enforces `state.limits.maximum_specialist_revisions`; no revision-planning Agent is used |
-| Output validation | 🟡 Partial | `validation/output_validator.py::validate_output` is wired as a pre-assembly cross-stage gate: it verifies ownership, aggregate/execution-graph consistency, selected specialist outputs, current project costs, and Lead Review approval. The diagram/catalog's post-assembly validation of the actual `ProductBlueprint` and rendered Markdown remains missing |
+| Output validation | ✅ Built | `validation/output_validator.py::validate_output` verifies pre-assembly ownership, aggregate/execution-graph consistency, specialist outputs, current project costs, and Lead Review approval. `validation/final_output_validator.py::validate_final_output` then validates the assembled `ProductBlueprint` and exact rendered Markdown before report storage or completion |
 | Deterministic Blueprint Generator | ✅ Built | `reporting/assembler.py` deterministically maps the approved aggregates and usage summary into all 17 `ProductBlueprint` sections; `reporting/markdown_renderer.py` renders and writes `blueprint.md` without an LLM call |
 | S3 report storage | ✅ Built | After blueprint generation, `reporting/storage.py` writes Markdown to `consultations/{consultation_id}/blueprints/v1/blueprint.md` in S3, with optional `blueprint.json`. Local development defaults to `data/reports/{consultation_id}/blueprint.md`. PostgreSQL stores the version-1 key, generation time, and Lead Review ID in `blueprint_reports` |
 | Final Report / Frontend | ✅ Built | The frontend renders the completed typed blueprint as a navigable 17-section document, surfaces open questions separately from limitations, and downloads `generated_markdown` as `blueprint.md` |
@@ -146,7 +146,7 @@ the application container receives the Compose-network URL using
 `postgres:5432`. Only one `DATABASE_URL` is used in each runtime context.
 SQLite and a local `data/` directory are not required for the active setup.
 
-### 4. 🟡 Partial — Output validation — `src/buildwise/validation/`
+### 4. ✅ Done — Output validation — `src/buildwise/validation/`
 `validation/output_validator.py::validate_output(state)` is the final
 deterministic cross-stage pass before blueprint assembly. It requires
 Discovery, Product Planning, the specialist execution plan, Technical
@@ -158,9 +158,10 @@ approval when the Lead Review is inconsistent or retains a blocking revision.
 `BuildWiseConsultingFlow.build_blueprint()` now invokes this validator before
 the deterministic generator.
 
-This is not yet the catalog's final-output validator: no validator receives
-the assembled `ProductBlueprint` or checks its rendered Markdown before
-storage and delivery.
+`validation/final_output_validator.py` receives the assembled
+`ProductBlueprint` and rejects missing/out-of-order sections, blank content,
+placeholders, invalid structural references, missing disclosures, inconsistent
+usage, and stale generated Markdown before storage and delivery.
 
 Lead Review decision consistency now has one reusable domain check,
 `LeadReview.validate_decision_consistency()`, shared by the task guardrail and
@@ -189,13 +190,13 @@ environments can use the filesystem backend at
 replacement, and multi-version update workflows remain intentionally out of
 scope.
 
-### 6. 🟡 Partial — Complete runtime-budget accounting
-The lightweight usage aggregator is complete: each successful Crew execution
-appends a record and updates token, request, duration, and reliably supplied
-cost totals. Provider/model attribution remains optional because CrewAI's
-aggregate `UsageMetrics` currently exposes token and successful-request counts
-but not model identity or cost. Tool-call and retry instrumentation, plus
-enforcement of the remaining `FlowRuntimeLimits`, are still required.
+### 6. ✅ Done — Runtime-budget accounting and enforcement
+The lightweight usage aggregator records Crew token, request, agent-execution,
+duration, and reliably supplied cost totals. `RuntimeBudgetController` checks
+agent capacity before Crew execution and enforces token, known cost, execution
+duration, and tool-call limits. Governed tool calls append usage and retry
+counts to the same persisted summary. Provider/model attribution remains
+optional when CrewAI does not expose reliable metadata.
 
 ### 7. ✅ Done — Consultation API endpoints — `src/buildwise/api/v1/`
 Implemented start, clarification submission, status lookup, and result lookup.
@@ -235,17 +236,15 @@ are documented in the root `README.md`.
   state resume through completion, active-round/question validation, status
   and result retrieval, all four review decisions, malformed revision
   decisions, revision-limit exhaustion, and session ownership. The full suite
-  contains 82 passing tests with no live LLM calls. The frontend additionally
+  contains more than 120 passing tests with no live LLM calls. The frontend additionally
   passes ESLint, TypeScript checking, and its production build.
-- The planner's budget policy is intentionally coarse per the PRD (no exact
+- The planner's selection-time budget policy is intentionally coarse per the PRD (no exact
   token/dollar estimation): it only reads
   `FlowRuntimeLimits.maximum_agent_executions` and
   `.maximum_estimated_cost_usd`. The Flow now enforces
-  `.maximum_session_tokens` from aggregated Crew usage and
-  `.maximum_estimated_cost_usd` when every recorded Crew supplies reliable
-  cost metadata. `.maximum_tool_calls` and `.maximum_execution_seconds`
-  remain unenforced, although Crew execution duration is now measured and
-  retained.
+  all `FlowRuntimeLimits` at execution time. Known token/cost totals are checked
+  after each Crew; agent capacity is checked before each Crew; governed tool
+  calls and retries are counted; and cumulative execution duration is enforced.
 - `reporting/` now contains the deterministic assembler and Markdown renderer;
   `validation/` contains the final cross-stage validator described in step 4.
 
@@ -276,10 +275,10 @@ Output shape. Same legend: ✅ Built · 🟡 Partial · 🔴 Missing.
 |---|---|---|
 | Performance: < 2 minutes end-to-end | 🔴 Not verifiable | The orchestrator exists, but no live-LLM end-to-end performance benchmark has been run |
 | Reliability: partial specialist failures shouldn't fail the whole workflow | 🟡 Partial | The live Flow tracks specialist lifecycle and routes required-specialist failure, but Crew-level exception normalization and optional-specialist degraded continuation are not yet complete |
-| Security — Prompt Injection Protection | 🔴 Missing | No sanitization or prompt-injection defenses found anywhere in `tasks/` or `domain/intake.py`; input is only Pydantic-schema-validated, not adversarially screened |
+| Security — Prompt Injection Protection | ✅ Built | `InputGuardrailProcessor` rejects high-confidence injection/credential patterns before persistence, and every registry-resolved tool is wrapped by the output sanitizer before agent use |
 | Security — Tool Restrictions | ✅ Built | `tools/registry.py` exposes a small, explicit `ToolKey` whitelist (`web_search`, `web_scraper`, `github_search`) with per-tool env-var gating; agents can only request tools by these keys |
 | Security — Input Validation | ✅ Built | The live consultation endpoints apply strict Pydantic request validation to vague intake, clarification rounds, and structured answers; semantic prompt-injection and secret detection remain separate missing security controls |
-| Cost — Session budget controls | 🟡 Partial | The Flow enforces session tokens and revision rounds and the planner applies agent/cost selection limits. Tool-call, duration, and actual estimated-cost enforcement remain incomplete |
+| Cost — Session budget controls | ✅ Built | The planner applies selection limits and `RuntimeBudgetController` enforces Crew agent capacity, session tokens, reliably known cost, tool calls, retries, and cumulative execution duration |
 
 ## Agents
 
@@ -387,9 +386,9 @@ further alignment work.
 
 | Contract requirement | Status | Notes |
 |---|---|---|
-| Semantic input validation / prompt-injection detection / secret detection as explicit pre-acceptance pipeline stages (`full_architecture_flow.md` §7–9: "Prompt Injection Check", "Secret Detection", 12-item AI-security threat list including indirect injection via web results, hidden instruction attacks, cross-session leakage) | 🔴 Missing | The consultation API now provides strong structural Pydantic validation, but no semantic prompt-injection or secret-detection stage exists in `tasks/`, `domain/intake.py`, or `api/`. This is the same gap as "Key misalignments" item 3, now specified in much more detail by both new documents — including the principle "all user input, external content, and tool output must be treated as untrusted data", which nothing currently enforces |
-| Tool definitions require purpose, allowed users/operations, input constraints, output schema, timeout, retry policy, rate limit, side-effect classification, sensitive-data policy, logging policy, failure behavior (`crewai_runtime_architecture.md` §10) | 🟡 Partial | `tools/registry.py::ToolRegistry` implements the default-deny key allowlist and per-tool env-var gating (§10.1) cleanly, but none of the other governance fields exist as structured policy — there's no `tools/policies.py`, no timeout/retry/rate-limit config per tool, no tool-output sanitization or untrusted-content handling |
-| Tool output must pass a security/injection guardrail before being used by a specialist (`full_architecture_flow.md` diagram: `TOOL_OUTPUT_GUARDRAIL`) | 🔴 Missing | No such guardrail exists; tool results returned by `ToolRegistry.resolve_many()` flow directly into the agent with no intermediate check |
+| Semantic input validation / prompt-injection detection / secret detection as explicit pre-acceptance pipeline stages (`full_architecture_flow.md` §7–9) | ✅ Built for deterministic MVP scope | Intake and clarification payloads pass through `InputGuardrailProcessor` before persistence/model use. Shared security patterns reject prompt override/exfiltration markers and common credential formats without echoing matched secrets |
+| Tool definitions require purpose, allowed users/operations, input constraints, output schema, timeout, retry policy, rate limit, side-effect classification, sensitive-data policy, logging policy, failure behavior (`crewai_runtime_architecture.md` §10) | ✅ Built for current read-only tools | `ToolRegistry` remains default-deny; `tools/policies.py` defines immutable read-only policies; the governed proxy enforces input size, HTTPS/domain rules, timeouts, bounded retries, session invocation budgets, safe errors, and output sanitization. No write-capable tools are currently registered |
+| Tool output must pass a security/injection guardrail before being used by a specialist (`full_architecture_flow.md` diagram: `TOOL_OUTPUT_GUARDRAIL`) | ✅ Built | Every `ToolRegistry.resolve()` result is a governed `SanitizedTool` proxy that removes instruction-bearing lines, redacts recognized secrets, marks content untrusted, and truncates output |
 | Deterministic + LLM guardrail split (`crewai_runtime_architecture.md` §17) | 🟡 Partial | Deterministic guardrails exist and are used extensively (`tasks/guardrails.py::require_pydantic_output` and friends); no LLM-based subjective guardrails (clarity, coherence, vague-recommendation detection) exist yet, and the doc's specific "one repair attempt then mark partial" pattern isn't implemented — current guardrails retry then fail the task rather than continuing with a partial/degraded result |
 
 ## Operational infrastructure
@@ -397,8 +396,8 @@ further alignment work.
 | Contract requirement | Status | Notes |
 |---|---|---|
 | Docker (multi-stage build, non-root user, health check, production ASGI server, `.dockerignore`, pinned deps) | ✅ Built | `Dockerfile` matches the spec closely: multi-stage `python:3.12-slim` build, non-root `buildwise` user, `HEALTHCHECK` hitting `/health`, `uv`-pinned deps. `docker-compose.yml` wires a Postgres service too. Not previously credited anywhere in this document |
-| CI (GitHub Actions: Ruff, mypy, pytest, coverage, startup smoke test) | 🔴 Missing | No `.github/workflows/` directory exists at all — zero automated CI, despite both architecture docs treating it as a required MVP control (`crewai_runtime_architecture.md` §2.8, `full_architecture_flow.md` §16–17) |
-| Docker/security CI workflow (image build, container smoke test, dependency audit, secret scanning, image scanning) | 🔴 Missing | Same as above — the Docker image itself is ready to be built by CI, but nothing builds or scans it automatically |
+| CI (GitHub Actions: Ruff, mypy, pytest, coverage, startup smoke test) | ✅ Built | `.github/workflows/ci.yml` runs Ruff, mypy, pytest with coverage, application startup/health smoke testing, Docker BuildKit construction, and a container health smoke test |
+| Docker/security CI workflow (image build, container smoke test, dependency audit, secret scanning, image scanning) | ✅ Built | `.github/workflows/security.yml` performs `pip-audit`, Gitleaks secret scanning, a Docker build, Trivy HIGH/CRITICAL image scanning, and SARIF upload |
 | `GET /metrics/summary` endpoint (`full_architecture_flow.md` §6) | 🔴 Missing | Operational health/readiness and all four consultation endpoints exist, but no metrics-summary endpoint is registered |
 | PostgreSQL system of record | ✅ Built and configured | The portable SQLAlchemy schema supports SQLite for isolated tests, but the active runtime is PostgreSQL. Docker Compose runs `buildwise-postgres`, persists data in the named `buildwise-postgres-data` volume, exposes the configured host port (`5433` currently), and injects `postgres:5432` into the application container. `.env.example` now presents PostgreSQL as the single runtime setup instead of also declaring a conflicting SQLite URL. `Settings.database_url` retains a SQLite fallback only when no environment configuration is supplied |
 | CrewAI tracing wired to Flow/Crew/agent/task/tool/LLM execution | 🟡 Partial | `Settings.crewai_tracing_enabled` is passed explicitly into the Flow and every Crew, and stage-level structlog events exist. BuildWise still has no trace adapter that correlates/persists trace IDs per consultation or verifies complete agent/task/tool/LLM coverage |
@@ -422,8 +421,8 @@ enforced.
 | Preliminary Capability Classifier | 🟡 Partial / embedded | Discovery produces `CapabilityClassification`; deterministic early-market and specialist policies consume its flags and signals | Classification is produced by the Discovery Agent rather than a separate fast/hybrid classifier, with no deterministic fallback classifier |
 | Initial Product Definition Validator | 🟡 Partial | Pydantic/domain validators cover Product Definition and Requirements structure, ownership, IDs, traceability, decisions, and many testability rules; task guardrails re-use selected domain checks; `ProductPlanningResult` validates aggregate ownership | No canonical `ProductDefinitionValidationResult`, unified contradiction/duplicate/untestable-requirement report, or bounded semantic repair handoff exists |
 | Specialist Planner | 🟡 Built with documented divergence | `planning/planner.py`, `policies.py`, and `execution_graph.py` deterministically select specialists, explain reasons, build dependencies/groups, and apply coarse budget trimming | The catalog says a model/hybrid planner and requires Market & GTM in the specialist plan. The implemented PRD deliberately uses pure Python and routes optional Market & GTM earlier, outside the Technical Planning plan. “Degraded mode” and token-category outputs are absent |
-| Cost Budget Controller | 🟡 Partial | `FlowRuntimeLimits`, planner budget policy, clarification/revision limits, and Flow checks enforce token and reliably-known LLM cost limits; optional specialists can be trimmed before execution | No single controller runs before every agent/tool call. Tool-call and execution-time limits are not enforced; actual agent-run limits are only approximated during planning; no runtime degraded-mode transition or remaining-budget result exists |
-| Tool Policy Manager | 🟡 Partial | `tools/registry.py::ToolRegistry` is a default-deny key registry with lazy construction, duplicate prevention, credential gating, and agent-contract tool selection | Missing structured per-tool input/output policies, domain restrictions, timeouts, retries, result/output-size limits, invocation accounting, and normalized tool errors |
+| Cost Budget Controller | ✅ Built | `RuntimeBudgetController` uses persisted `UsageSummary` and `FlowRuntimeLimits`; it checks Crew agent capacity before execution, records governed tool invocations/retries, and enforces tokens, reliably-known cost, tool calls, and cumulative execution duration | Provider-reported dollar cost remains nullable when metadata is unreliable; no synthetic pricing table is used |
+| Tool Policy Manager | ✅ Built for current tool set | `ToolRegistry` is default-deny and `tools/policies.py` defines immutable read-only execution policies. The proxy enforces input size, HTTPS/domain restrictions, timeouts, bounded retries, output size/sanitization, budget accounting, and normalized safe errors | Policies are process configuration rather than database-administered rules, which is appropriate for the MVP's three read-only tools |
 | Tool Output Sanitizer | ✅ Built | `tools/sanitizer.py` wraps every tool resolved by `ToolRegistry`, marks data untrusted, removes lines containing indirect prompt-injection patterns, redacts recognized credentials, normalizes non-string output, and enforces a 50,000-character limit before content reaches an Agent | This is an MVP deterministic sanitizer, not a general malware/content-classification service. Tool calls made outside the registry are intentionally unsupported and would bypass this boundary |
 | Agent Output Validator | 🟡 Partial | Every task uses `TaskOutput.pydantic` guardrails; `tasks/guardrails.py` provides type, non-empty collection, ownership, domain, and Lead Review checks; Pydantic models contain extensive agent-specific rules | No unified `AgentOutputValidationResult`; unsupported claims, placeholder text, citation existence, source credibility, recommendation-to-requirement relevance, and semantic contradictions are not generally checked |
 | Output Repair Processor | 🟡 Partial / CrewAI-native | Task guardrail failures return corrective instructions and CrewAI retries according to `guardrail_max_retries` | There is no separate fast-model repair processor, no canonical repaired-output contract, and the catalog's maximum-one-repair/revalidate-once behavior differs from the configured retry loop (normally two retries) |
@@ -434,22 +433,27 @@ enforced.
 | Markdown Renderer | ✅ Built with documented sequence | `reporting/markdown_renderer.py` deterministically renders ordered sections and usage; each section now renders its summary so disclosures are present in the deliverable; filesystem/S3 storage occurs only after final validation | BuildWise validates both the typed blueprint and its already-rendered Markdown in one post-assembly gate. This intentionally differs from the catalog's suggested validator-before-renderer ordering because the requested control must catch Markdown-only defects |
 | Session Manager | ✅ Built | `api/v1/consultation_service.py::ConsultationService` creates, checkpoints, runs, pauses, resumes, reconstructs, fails, and exposes consultation state/results | Active execution tracking is process-local; an application restart marks in-flight work failed rather than resuming it automatically |
 | Flow State Repository | ✅ Built | `persistence/flow_store.py::BuildWiseFlowStore`, SQLAlchemy repositories, and artifact versioning persist intake, discovery, questions/answers, planning outputs, `CostSummary`, Lead Review, revisions, blueprint, usage, errors, and report metadata | The implementation uses generic versioned artifact JSON rather than dedicated columns/tables for every catalog artifact, which is an intentional MVP persistence design |
-| Usage and Cost Tracker | 🟡 Partial | `application/usage_aggregator.py` appends per-Crew `UsageRecord`s and totals tokens, provider requests, duration, and explicitly supplied provider/model/cost metadata; usage JSON is persisted | CrewAI aggregate metrics do not expose provider/model/cost, so ordinary cost remains `null`. Tool calls, retries, failed calls, per-agent attribution, and degraded-mode decisions are not instrumented; no model-pricing table exists by design |
-| Error Normalizer | 🟡 Partial | Canonical `SessionError` records exist and background Flow exceptions are converted to a stable failure record | There is no centralized mapper for Pydantic, provider, rate-limit, tool, timeout, persistence, HTTP conflict, and unknown exceptions. Raw exception text is still used in the background failure message |
-| Rate Limiter | 🔴 Missing | Clarification and revision **workflow** limits exist in Flow state | No per-IP/API limiter, active-session cap, answer-submission limiter, retry-abuse protection, in-memory limiter, or Redis integration exists |
+| Usage and Cost Tracker | ✅ Built for available metadata | `UsageAggregator` appends per-Crew records; governed tools append invocation/retry/duration records; totals cover tokens, provider requests, agent executions, tools, retries, duration, and reliable cost metadata | CrewAI aggregate metrics still do not expose dependable provider/model/cost fields, so dollar cost correctly remains `null` rather than being guessed |
+| Error Normalizer | ✅ Built for runtime boundaries | `application/error_normalizer.py` maps budget, tool, timeout, invalid-output, and unknown failures into safe canonical `SessionError` records. Background execution no longer persists raw exception text; governed tools expose safe categories only | Additional provider-specific categories can be added when their concrete exception types are introduced |
+| Rate Limiter | ✅ Built for single-process MVP | POST consultation and clarification traffic is limited per client/operation by middleware; `ConsultationService` reserves queued/running work against a configurable active-consultation cap; both return normalized HTTP 429 responses | The limiter is intentionally process-local. Multi-worker/horizontally scaled deployment requires Redis or an API-gateway limiter |
 | Trace Adapter | 🟡 Partial | `CREWAI_TRACING_ENABLED` is passed to the Flow and all Crew factories; Flow stages also emit structured events | There is no BuildWise trace adapter that binds request/session/flow IDs into CrewAI traces, persists trace IDs, or explicitly records tools, retries, pauses, failures, latency, and usage as a correlated application trace |
 | Structured Logger | 🟡 Partial | `config/logging.py` configures Structlog JSON; request middleware binds request/session/flow/trace/stage keys and logs latency; Flow/service code emits stage and session events | Most non-HTTP events do not consistently bind agent/task/tool/status/retry/cost fields. There is no centralized sensitive-value/redaction processor, so the catalog's “must not log” policy is convention rather than enforcement |
 | Health and Readiness Service | 🟡 Partial | `/health` reports process identity; `/ready` checks database connectivity and LLM-provider configuration | `/metrics/summary` is missing. Readiness does not separately verify schema/persistence readiness, S3 report storage, configured tools, or live provider reachability |
 
-## Highest-priority catalog gaps
+## Recently completed priority gaps
 
-| Priority | Gap | Why it matters |
+| Priority | Gap | Result |
 |---|---|---|
-| 1 | Runtime Cost Budget Controller completion | Tool-call, elapsed-time, retry, and actual execution-count limits exist as configuration/model fields but are not consistently enforced around runtime operations |
-| 2 | Tool Policy Manager completion | Tool keys are allowlisted and output is now sanitized/size-limited, but execution constraints, timeouts, accounting, and normalized failures remain absent |
-| 3 | Rate Limiter | Public API/session abuse controls are absent even though workflow-internal round limits exist |
-| 4 | Unified error normalization and redaction | Failure and logging behavior is not consistently safe or stable across provider, tool, persistence, and validation boundaries |
-| 5 | Separate/fallback lightweight classifiers | Completeness, clarification generation, and preliminary capability classification currently share the Primary-tier Discovery Agent and have no deterministic fallback path |
+| 1 | Runtime Cost Budget Controller completion | ✅ Crew and tool execution now share persisted enforcement for agent, tool, retry, time, token, and reliably-known cost limits |
+| 2 | Tool Policy Manager completion | ✅ Current read-only tools have immutable policies, input/URL controls, timeouts, retries, accounting, sanitization, and safe failures |
+| 3 | Rate Limiter | ✅ Per-client POST throttling and a process-wide queued/running consultation cap return HTTP 429 on exhaustion |
+| 4 | Unified error normalization and degraded execution | ✅ Background errors no longer persist raw exception text; optional missing technical artifacts are marked failed, warned, and may continue to Lead Review while Solution Architecture remains mandatory |
+| 5 | CI and security automation | ✅ Quality, tests/coverage, startup, Docker, dependency, secret, and image checks are defined under `.github/workflows/` |
+
+The next likely priorities are shared/distributed rate limiting for scaled
+deployments, provider/model fallback, correlated trace persistence,
+`/metrics/summary`, and deterministic fallbacks for the embedded Discovery
+classifiers.
 
 ## Catalog inconsistencies requiring an architecture decision
 

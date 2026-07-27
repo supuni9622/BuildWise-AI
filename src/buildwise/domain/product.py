@@ -27,7 +27,6 @@ from buildwise.domain.enums import (
     RoadmapHorizon,
 )
 
-
 PersonaType = Literal[
     "primary",
     "secondary",
@@ -541,7 +540,7 @@ class ProductDefinition(BuildWiseModel):
     ) -> list[object]:
         """Prevent duplicate domain artifact identifiers."""
 
-        artifact_ids = [getattr(item, "id") for item in value]
+        artifact_ids = [getattr(item, "id") for item in value]  # noqa: B009
 
         if len(artifact_ids) != len(set(artifact_ids)):
             raise ValueError(

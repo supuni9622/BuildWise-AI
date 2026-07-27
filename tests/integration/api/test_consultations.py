@@ -21,6 +21,7 @@ from buildwise.domain.blueprint import ProductBlueprint, UsageSummary
 from buildwise.domain.common import generate_uuid
 from buildwise.domain.discovery import ClarificationQuestion, ClarificationQuestionSet
 from buildwise.domain.enums import SessionStatus
+from buildwise.domain.exceptions import ActiveSessionLimitExceeded
 from buildwise.domain.intake import ClarificationAnswer
 from buildwise.flows.consulting_flow import BuildWiseConsultingFlow
 from buildwise.flows.state import BuildWiseFlowState
@@ -223,3 +224,23 @@ def test_service_rejects_answers_outside_active_question_set(tmp_path: Path) -> 
 
     with pytest.raises(ValueError, match="outside the active set"):
         service.enqueue_clarifications(started.consultation_id, request)
+
+
+def test_service_enforces_active_consultation_limit(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'capacity.db'}")
+    service = ConsultationService(
+        flow_store=BuildWiseFlowStore(engine),
+        maximum_active_consultations=1,
+    )
+    service.enqueue_start(
+        StartConsultationRequest(
+            idea="Build a planning service for independent retail operators."
+        )
+    )
+
+    with pytest.raises(ActiveSessionLimitExceeded):
+        service.enqueue_start(
+            StartConsultationRequest(
+                idea="Build another planning service for local hospitality teams."
+            )
+        )

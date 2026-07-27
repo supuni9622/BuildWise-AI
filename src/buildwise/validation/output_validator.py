@@ -70,10 +70,12 @@ def validate_output(state: BuildWiseFlowState) -> None:
         dependencies=plan.dependencies,
         execution_groups=plan.execution_groups,
     )
+    failed = set(state.failed_specialists)
+    effective_selected = selected - failed
     technical.validate_specialist_selection(
-        ai_selected=SpecialistType.AI_ARCHITECTURE in selected,
-        security_selected=SpecialistType.SECURITY_ARCHITECTURE in selected,
-        qa_selected=SpecialistType.QA_AND_EVALUATION in selected,
+        ai_selected=SpecialistType.AI_ARCHITECTURE in effective_selected,
+        security_selected=SpecialistType.SECURITY_ARCHITECTURE in effective_selected,
+        qa_selected=SpecialistType.QA_AND_EVALUATION in effective_selected,
     )
     review.validate_decision_consistency()
 

@@ -13,7 +13,7 @@ from buildwise.domain.blueprint import (
 )
 from buildwise.domain.costs import CostSummary, ProjectCostEstimate
 from buildwise.domain.discovery import DiscoveryResult
-from buildwise.domain.enums import BlueprintSectionType
+from buildwise.domain.enums import BlueprintSectionType, SpecialistType
 from buildwise.domain.product import ProductFeature, ProductRoadmapItem
 from buildwise.domain.product_planning import ProductPlanningResult
 from buildwise.domain.requirements import RequirementsSpecification, UserJourney
@@ -43,6 +43,22 @@ def assemble_blueprint(
     ai = technical_planning.ai_architecture
     security = technical_planning.security_architecture
     qa = technical_planning.qa_evaluation
+    selected_specialists = {
+        recommendation.specialist
+        for recommendation in specialist_plan.recommendations
+    }
+    unavailable_specialist_limitations = [
+        (
+            f"{specialist.value} was selected but its analysis was unavailable; "
+            "the blueprint continued with this limitation."
+        )
+        for specialist, artifact in (
+            (SpecialistType.AI_ARCHITECTURE, ai),
+            (SpecialistType.SECURITY_ARCHITECTURE, security),
+            (SpecialistType.QA_AND_EVALUATION, qa),
+        )
+        if artifact is None and specialist in selected_specialists
+    ]
 
     assumptions = _unique(
         [
@@ -76,6 +92,7 @@ def assemble_blueprint(
             *solution.limitations,
             *(ai.limitations if ai else []),
             *lead_review.limitations,
+            *unavailable_specialist_limitations,
         ]
     )
     risks = _unique(
@@ -167,7 +184,14 @@ def assemble_blueprint(
         _section(
             BlueprintSectionType.AI_ARCHITECTURE,
             "AI Architecture",
-            ai.executive_summary if ai else "AI Architecture was not selected.",
+            (
+                ai.executive_summary
+                if ai
+                else _optional_specialist_summary(
+                    BlueprintSectionType.AI_ARCHITECTURE,
+                    selected_specialists,
+                )
+            ),
             (
                 _paragraphs(
                     ("Strategy", str(ai.model_strategy)),
@@ -177,13 +201,23 @@ def assemble_blueprint(
                     ("Fallback", ai.fallback_strategy),
                 )
                 if ai
-                else "AI Architecture was not selected for this consultation."
+                else _optional_specialist_summary(
+                    BlueprintSectionType.AI_ARCHITECTURE,
+                    selected_specialists,
+                )
             ),
         ),
         _section(
             BlueprintSectionType.SECURITY_ARCHITECTURE,
             "Security Architecture",
-            security.executive_summary if security else "Security Architecture was not selected.",
+            (
+                security.executive_summary
+                if security
+                else _optional_specialist_summary(
+                    BlueprintSectionType.SECURITY_ARCHITECTURE,
+                    selected_specialists,
+                )
+            ),
             (
                 _paragraphs(
                     ("Summary", security.executive_summary),
@@ -191,13 +225,23 @@ def assemble_blueprint(
                     ("Recommendations", _bullets(security.recommendations)),
                 )
                 if security
-                else "Security Architecture was not selected for this consultation."
+                else _optional_specialist_summary(
+                    BlueprintSectionType.SECURITY_ARCHITECTURE,
+                    selected_specialists,
+                )
             ),
         ),
         _section(
             BlueprintSectionType.QA_AND_EVALUATION,
             "QA and Evaluation",
-            qa.executive_summary if qa else "QA and Evaluation was not selected.",
+            (
+                qa.executive_summary
+                if qa
+                else _optional_specialist_summary(
+                    BlueprintSectionType.QA_AND_EVALUATION,
+                    selected_specialists,
+                )
+            ),
             (
                 _paragraphs(
                     ("Summary", qa.executive_summary),
@@ -206,7 +250,10 @@ def assemble_blueprint(
                     ("Recommendations", _bullets(qa.recommendations)),
                 )
                 if qa
-                else "QA and Evaluation was not selected for this consultation."
+                else _optional_specialist_summary(
+                    BlueprintSectionType.QA_AND_EVALUATION,
+                    selected_specialists,
+                )
             ),
         ),
         _section(
@@ -318,6 +365,23 @@ def _section(
             f"## {title}\n\n_{summary}_\n\n{body or '_None recorded._'}"
         ),
     )
+
+
+def _optional_specialist_summary(
+    section: BlueprintSectionType,
+    selected_specialists: set[SpecialistType],
+) -> str:
+    label = {
+        BlueprintSectionType.AI_ARCHITECTURE: "AI Architecture",
+        BlueprintSectionType.SECURITY_ARCHITECTURE: "Security Architecture",
+        BlueprintSectionType.QA_AND_EVALUATION: "QA and Evaluation",
+    }[section]
+    if section.value in {selected.value for selected in selected_specialists}:
+        return (
+            f"{label} was selected but its analysis was unavailable. "
+            "The blueprint continued with an explicit limitation."
+        )
+    return f"{label} was not selected for this consultation."
 
 
 def _paragraphs(*items: tuple[str, str]) -> str:

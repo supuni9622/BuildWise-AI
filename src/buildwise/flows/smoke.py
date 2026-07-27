@@ -1,3 +1,5 @@
+from typing import cast
+
 from crewai.flow.flow import Flow, listen, start
 from pydantic import BaseModel
 
@@ -11,7 +13,7 @@ class BuildWiseSmokeFlow(Flow[SmokeFlowState]):
     @start()
     def initialize(self) -> str:
         self.state.message = "BuildWise CrewAI smoke flow"
-        return self.state.message
+        return cast(str, self.state.message)
 
     @listen(initialize)
     def complete(self, message: str) -> str:

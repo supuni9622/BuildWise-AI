@@ -852,7 +852,7 @@ class DiscoveryResult(BuildWiseModel):
     ) -> list[object]:
         """Prevent duplicate discovery artifact identifiers."""
 
-        ids = [item.id for item in value]
+        ids = [getattr(item, "id") for item in value]  # noqa: B009
 
         if len(ids) != len(set(ids)):
             raise ValueError("Discovery artifact IDs must be unique within each collection.")

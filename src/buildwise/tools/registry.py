@@ -11,6 +11,7 @@ from crewai_tools import (
     SerperDevTool,
 )
 
+from buildwise.tools.policies import DEFAULT_TOOL_POLICIES, ToolPolicy
 from buildwise.tools.sanitizer import SanitizedTool, ToolOutputSanitizer
 
 
@@ -45,8 +46,14 @@ class ToolRegistry:
     Tools are instantiated only when an agent contract requests them.
     """
 
-    def __init__(self, *, sanitizer: ToolOutputSanitizer | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        sanitizer: ToolOutputSanitizer | None = None,
+        policies: dict[str, ToolPolicy] | None = None,
+    ) -> None:
         self._sanitizer = sanitizer or ToolOutputSanitizer()
+        self._policies = policies or DEFAULT_TOOL_POLICIES
         self._factories: dict[ToolKey, ToolFactory] = {
             ToolKey.WEB_SEARCH: self._build_web_search,
             ToolKey.WEB_SCRAPER: self._build_web_scraper,
@@ -85,7 +92,11 @@ class ToolRegistry:
         if factory is None:
             raise KeyError(f"No tool factory is registered for '{normalized_key.value}'.")
 
-        return SanitizedTool(factory(), sanitizer=self._sanitizer)
+        return SanitizedTool(
+            factory(),
+            sanitizer=self._sanitizer,
+            policy=self._policies[normalized_key.value],
+        )
 
     def resolve_many(
         self,

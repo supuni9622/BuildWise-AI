@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     max_agent_executions: int = Field(default=20, ge=1)
     max_tool_calls: int = Field(default=30, ge=0)
     max_retries_per_operation: int = Field(default=2, ge=0, le=5)
+    api_rate_limit_requests: int = Field(default=30, ge=1, le=10_000)
+    api_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3_600)
+    max_active_consultations: int = Field(default=10, ge=1, le=1_000)
 
     @field_validator("api_v1_prefix")
     @classmethod

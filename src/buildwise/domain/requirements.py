@@ -24,7 +24,6 @@ from buildwise.domain.enums import (
     RequirementStatus,
 )
 
-
 AcceptanceCriterionType = Literal[
     "functional",
     "validation",
@@ -257,15 +256,18 @@ class AcceptanceCriterion(BuildWiseModel):
                 "a complete given/when/then scenario."
             )
 
-        if self.measurable and self.criterion_type in {
-            "performance",
-            "accessibility",
-        }:
-            if self.target is None:
-                raise ValueError(
-                    "Performance and accessibility criteria require a target "
-                    "when measurable is true."
-                )
+        if (
+            self.measurable
+            and self.criterion_type in {
+                "performance",
+                "accessibility",
+            }
+            and self.target is None
+        ):
+            raise ValueError(
+                "Performance and accessibility criteria require a target "
+                "when measurable is true."
+            )
 
         if not self.measurable and self.target is not None:
             raise ValueError(
@@ -488,16 +490,20 @@ class DataRequirement(BuildWiseModel):
                 "legal-requirement retention."
             )
 
-        if self.contains_sensitive_data and not self.contains_personal_data:
-            if self.data_classification not in {
+        if (
+            self.contains_sensitive_data
+            and not self.contains_personal_data
+            and self.data_classification
+            not in {
                 "confidential",
                 "restricted",
                 "regulated",
-            }:
-                raise ValueError(
-                    "Sensitive non-personal data must be classified as "
-                    "confidential, restricted, or regulated."
-                )
+            }
+        ):
+            raise ValueError(
+                "Sensitive non-personal data must be classified as "
+                "confidential, restricted, or regulated."
+            )
 
         if self.contains_personal_data and self.data_classification == "public":
             raise ValueError(
@@ -988,16 +994,20 @@ class IntegrationRequirement(BuildWiseModel):
                 "rate_limit_expected is false."
             )
 
-        if self.real_time_required and not self.synchronous:
-            if self.integration_type not in {
+        if (
+            self.real_time_required
+            and not self.synchronous
+            and self.integration_type
+            not in {
                 "webhook",
                 "message_queue",
                 "event_stream",
-            }:
-                raise ValueError(
-                    "Asynchronous real-time integrations must use webhook, "
-                    "message_queue, or event_stream."
-                )
+            }
+        ):
+            raise ValueError(
+                "Asynchronous real-time integrations must use webhook, "
+                "message_queue, or event_stream."
+            )
 
         if (
             self.priority is RequirementPriority.MUST_HAVE
@@ -1534,7 +1544,7 @@ class RequirementsSpecification(BuildWiseModel):
     ) -> list[object]:
         """Prevent duplicate artifact identifiers within collections."""
 
-        artifact_ids = [getattr(item, "id") for item in value]
+        artifact_ids = [getattr(item, "id") for item in value]  # noqa: B009
 
         if len(artifact_ids) != len(set(artifact_ids)):
             raise ValueError(
@@ -1692,16 +1702,16 @@ class RequirementsSpecification(BuildWiseModel):
                     identifiers=missing_dependencies,
                 )
 
-        for requirement in self.non_functional_requirements:
+        for non_functional_requirement in self.non_functional_requirements:
             missing_functional_requirements = set(
-                requirement.related_functional_requirement_ids
+                non_functional_requirement.related_functional_requirement_ids
             ).difference(functional_ids)
 
             if missing_functional_requirements:
                 self._raise_missing_reference_error(
                     owner=(
                         "Non-functional requirement "
-                        f"'{requirement.title}'"
+                        f"'{non_functional_requirement.title}'"
                     ),
                     reference_type="functional requirements",
                     identifiers=missing_functional_requirements,
@@ -1980,23 +1990,23 @@ class RequirementsSpecification(BuildWiseModel):
             referenced_feature_ids.update(requirement.feature_ids)
             referenced_persona_ids.update(requirement.persona_ids)
 
-        for requirement in requirements_specification.data_requirements:
+        for data_requirement in requirements_specification.data_requirements:
             referenced_feature_ids.update(
-                requirement.related_feature_ids
+                data_requirement.related_feature_ids
             )
 
-        for requirement in (
+        for integration_requirement in (
             requirements_specification.integration_requirements
         ):
             referenced_feature_ids.update(
-                requirement.related_feature_ids
+                integration_requirement.related_feature_ids
             )
 
-        for requirement in (
+        for non_functional_requirement in (
             requirements_specification.non_functional_requirements
         ):
             referenced_feature_ids.update(
-                requirement.related_feature_ids
+                non_functional_requirement.related_feature_ids
             )
 
         for rule in requirements_specification.business_rules:

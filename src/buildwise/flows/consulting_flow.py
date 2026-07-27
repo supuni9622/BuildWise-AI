@@ -15,6 +15,11 @@ from pydantic import BaseModel, PrivateAttr
 
 from buildwise.agents.factory import AgentFactory
 from buildwise.application.cost_aggregator import ProjectCostAggregator
+from buildwise.application.error_normalizer import normalize_session_error
+from buildwise.application.runtime_budget import (
+    RuntimeBudgetController,
+    runtime_budget_scope,
+)
 from buildwise.application.usage_aggregator import UsageAggregator
 from buildwise.config.settings import Settings, get_settings
 from buildwise.crews.discovery import (
@@ -319,7 +324,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
             output,
             session_id=self.state.session_id,
         )
-        self._complete_specialist_executions(result)
+        self._finalize_specialist_executions(result)
         self.state.set_technical_planning_result(result)
         self._aggregate_project_costs()
         route_after_specialists(self.state)
@@ -567,7 +572,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
             session_id=self.state.session_id,
             previous_result=previous,
         )
-        self._complete_specialist_executions(result)
+        self._finalize_specialist_executions(result)
         self.state.set_technical_planning_result(result)
         self._aggregate_project_costs()
 
@@ -610,7 +615,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
             ):
                 self.state.mark_specialist_running(specialist=execution.specialist)
 
-    def _complete_specialist_executions(
+    def _finalize_specialist_executions(
         self,
         result: TechnicalPlanningResult,
     ) -> None:
@@ -620,16 +625,55 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
             SpecialistType.SECURITY_ARCHITECTURE: result.security_architecture,
             SpecialistType.QA_AND_EVALUATION: result.qa_evaluation,
         }
-        for specialist, artifact in artifacts.items():
+        for specialist in self.state.selected_specialists:
+            artifact = artifacts[specialist]
             if artifact is not None:
                 self.state.mark_specialist_completed(
                     specialist=specialist,
                     artifact_id=getattr(artifact, "id", generate_uuid()),
                 )
+                continue
+            if specialist is SpecialistType.SOLUTION_ARCHITECTURE:
+                raise ValueError(
+                    "Technical Planning did not produce the required Solution Architecture."
+                )
+            error = normalize_session_error(
+                RuntimeError("Optional specialist output unavailable."),
+                stage=SessionStage.SPECIALIST_EXECUTION,
+                task_name=specialist.value,
+            ).model_copy(
+                update={
+                    "code": "optional_specialist_unavailable",
+                    "message": (
+                        f"The optional {specialist.value} analysis was unavailable; "
+                        "the consultation continued with an explicit limitation."
+                    ),
+                    "recoverable": True,
+                }
+            )
+            self.state.mark_specialist_failed(
+                specialist=specialist,
+                error=error,
+            )
+            self.state.add_warning(
+                WarningMessage(
+                    code=f"{specialist.value}_unavailable",
+                    message=error.message,
+                    stage=SessionStage.SPECIALIST_EXECUTION.value,
+                    source=specialist.value,
+                )
+            )
 
     def _kickoff(self, crew: Crew, *, stage: str) -> CrewOutput:
+        agent_execution_count = max(len(getattr(crew, "agents", [])), 1)
+        budget = RuntimeBudgetController(
+            summary=self.state.usage,
+            limits=self.state.limits,
+        )
+        budget.require_crew_capacity(agent_executions=agent_execution_count)
         started_at = perf_counter()
-        output = crew.kickoff()
+        with runtime_budget_scope(budget):
+            output = crew.kickoff()
         duration_ms = round((perf_counter() - started_at) * 1000)
         if not isinstance(output, CrewOutput):
             raise TypeError("BuildWise Crews must use non-streaming CrewOutput.")
@@ -638,15 +682,9 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
             metrics=output.token_usage,
             task_name=stage,
             execution_duration_ms=duration_ms,
+            agent_execution_count=agent_execution_count,
         )
-        usage = self.state.usage
-        if usage.total_tokens > self.state.limits.maximum_session_tokens:
-            raise RuntimeError("The maximum session token budget was exceeded.")
-        if (
-            usage.estimated_cost_usd is not None
-            and usage.estimated_cost_usd > self.state.limits.maximum_estimated_cost_usd
-        ):
-            raise RuntimeError("The maximum estimated session cost was exceeded.")
+        budget.require_totals_within_limits()
         return output
 
     def _transition(self, stage: SessionStage, status: SessionStatus) -> None:

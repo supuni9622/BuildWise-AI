@@ -324,6 +324,33 @@ Set it to `false` to disable tracing. Because the application setting is an
 explicit runtime override, CrewAI CLI consent settings do not override it.
 
 ---
+Runtime safety and capacity controls
+
+The default local limits are:
+
+```env
+MAX_SESSION_TOKENS=120000
+MAX_ESTIMATED_COST_USD=10.00
+MAX_AGENT_EXECUTIONS=20
+MAX_TOOL_CALLS=30
+MAX_EXECUTION_SECONDS=900
+MAX_RETRIES_PER_OPERATION=2
+
+API_RATE_LIMIT_REQUESTS=30
+API_RATE_LIMIT_WINDOW_SECONDS=60
+MAX_ACTIVE_CONSULTATIONS=10
+```
+
+Crew and governed tool executions consume these persisted session budgets.
+Tool calls are read-only, sanitized, bounded by per-tool timeouts/retries, and
+rejected when their URL or input policy fails. The API limiter is process-local
+and suitable for the single-process MVP. A multi-worker or horizontally scaled
+deployment should replace it with a shared Redis/API-gateway limiter.
+
+The application returns HTTP `429` when either the per-client request limit or
+the process-wide active-consultation limit is reached.
+
+---
 Run quality checks
 Ruff lint
 ```bash

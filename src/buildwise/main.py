@@ -5,6 +5,7 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from buildwise.api.rate_limiter import ConsultationRateLimitMiddleware
 from buildwise.api.router import api_router
 from buildwise.config.logging import configure_logging
 from buildwise.config.settings import get_settings
@@ -44,6 +45,11 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     application.add_middleware(RequestContextMiddleware)
+    application.add_middleware(
+        ConsultationRateLimitMiddleware,
+        requests=settings.api_rate_limit_requests,
+        window_seconds=settings.api_rate_limit_window_seconds,
+    )
     register_exception_handlers(application)
     application.include_router(api_router)
 

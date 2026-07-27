@@ -20,10 +20,13 @@ class UsageAggregator:
         metrics: UsageMetrics,
         task_name: str,
         execution_duration_ms: int,
+        agent_execution_count: int = 1,
         provider_metadata: Mapping[str, Any] | None = None,
     ) -> UsageRecord:
         if execution_duration_ms < 0:
             raise ValueError("execution_duration_ms cannot be negative.")
+        if agent_execution_count < 1:
+            raise ValueError("agent_execution_count must be positive.")
 
         metadata = provider_metadata or {}
         estimated_cost = _optional_non_negative_float(
@@ -39,6 +42,7 @@ class UsageAggregator:
             total_tokens=metrics.total_tokens,
             estimated_cost_usd=estimated_cost,
             request_count=metrics.successful_requests,
+            agent_execution_count=agent_execution_count,
             execution_duration_ms=execution_duration_ms,
         )
         summary.records.append(record)
@@ -60,6 +64,7 @@ def aggregate_usage(
     metrics: UsageMetrics,
     task_name: str,
     execution_duration_ms: int,
+    agent_execution_count: int = 1,
     provider_metadata: Mapping[str, Any] | None = None,
 ) -> UsageRecord:
     """Functional wrapper for callers that do not need an aggregator instance."""
@@ -69,6 +74,7 @@ def aggregate_usage(
         metrics=metrics,
         task_name=task_name,
         execution_duration_ms=execution_duration_ms,
+        agent_execution_count=agent_execution_count,
         provider_metadata=provider_metadata,
     )
 

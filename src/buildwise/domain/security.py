@@ -4,12 +4,10 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from buildwise.domain.common import (
+from buildwise.domain.enums import (
     ConfidenceLevel,
     CostCategory,
     CostFrequency,
-)
-from buildwise.domain.enums import (
     RiskLikelihood,
     RiskSeverity,
 )

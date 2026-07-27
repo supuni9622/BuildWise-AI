@@ -8,7 +8,9 @@ from threading import Lock
 import structlog
 from crewai.flow.persistence.base import FlowPersistence
 
+from buildwise.application.error_normalizer import normalize_session_error
 from buildwise.application.input_guardrail import InputGuardrailProcessor
+from buildwise.config.settings import get_settings
 from buildwise.domain.api import (
     ConsultationResponse,
     ConsultationResultResponse,
@@ -17,6 +19,7 @@ from buildwise.domain.api import (
 )
 from buildwise.domain.blueprint import ProductBlueprint
 from buildwise.domain.enums import SessionStatus
+from buildwise.domain.exceptions import ActiveSessionLimitExceeded
 from buildwise.domain.session import SessionError
 from buildwise.flows.consulting_flow import BuildWiseConsultingFlow
 from buildwise.flows.state import BuildWiseFlowState
@@ -47,10 +50,16 @@ class ConsultationService:
         flow_store: BuildWiseFlowStore,
         flow_factory: FlowFactory = _default_flow_factory,
         input_guardrail: InputGuardrailProcessor | None = None,
+        maximum_active_consultations: int | None = None,
     ) -> None:
         self._flow_store = flow_store
         self._flow_factory = flow_factory
         self._input_guardrail = input_guardrail or InputGuardrailProcessor()
+        self._maximum_active_consultations = (
+            maximum_active_consultations
+            if maximum_active_consultations is not None
+            else get_settings().max_active_consultations
+        )
         self._active_consultations: set[str] = set()
         self._active_lock = Lock()
 
@@ -60,11 +69,16 @@ class ConsultationService:
         self._input_guardrail.require_allowed(request)
         state = BuildWiseFlowState(intake_request=request)
         consultation_id = str(state.session_id)
-        self._flow_store.save_state(
-            consultation_id,
-            method_name="consultation_queued",
-            state_data=state,
-        )
+        self._reserve_execution(consultation_id)
+        try:
+            self._flow_store.save_state(
+                consultation_id,
+                method_name="consultation_queued",
+                state_data=state,
+            )
+        except Exception:
+            self._release_execution(consultation_id)
+            raise
         return self._response(state)
 
     def enqueue_clarifications(
@@ -81,20 +95,24 @@ class ConsultationService:
                 "clarification_round does not match the active clarification round."
             )
 
-        flow = self._flow_factory(state, self._flow_store)
-        flow.submit_clarification_answers(request.answers)
-        self._flow_store.save_consultation_state(
-            consultation_id,
-            method_name="submit_clarification_answers",
-            state_data=flow.state,
-        )
+        self._reserve_execution(consultation_id)
+        try:
+            flow = self._flow_factory(state, self._flow_store)
+            flow.submit_clarification_answers(request.answers)
+            self._flow_store.save_consultation_state(
+                consultation_id,
+                method_name="submit_clarification_answers",
+                state_data=flow.state,
+            )
+        except Exception:
+            self._release_execution(consultation_id)
+            raise
         return self._response(flow.state)
 
     def run(self, consultation_id: str) -> None:
         """Execute one queued or resumed Flow outside the HTTP response path."""
 
-        with self._active_lock:
-            self._active_consultations.add(consultation_id)
+        self._reserve_execution(consultation_id, allow_existing=True)
         try:
             state = self._load_state(consultation_id)
             flow = self._flow_factory(state, self._flow_store)
@@ -108,12 +126,9 @@ class ConsultationService:
                 failed_state = self._load_state(consultation_id)
                 if not failed_state.is_terminal:
                     failed_state.mark_failed(
-                        error=SessionError(
-                            code="background_execution_failed",
-                            message=str(error)
-                            or "Background consultation execution failed.",
+                        error=normalize_session_error(
+                            error,
                             stage=failed_state.stage,
-                            exception_type=type(error).__name__,
                         )
                     )
                     self._flow_store.save_consultation_state(
@@ -122,8 +137,7 @@ class ConsultationService:
                         state_data=failed_state,
                     )
         finally:
-            with self._active_lock:
-                self._active_consultations.discard(consultation_id)
+            self._release_execution(consultation_id)
 
     def get(self, consultation_id: str) -> ConsultationResponse:
         state = self._load_state(consultation_id)
@@ -170,6 +184,25 @@ class ConsultationService:
         if state_data is None:
             raise LookupError(f"Consultation '{consultation_id}' was not found.")
         return BuildWiseFlowState.model_validate(state_data)
+
+    def _reserve_execution(
+        self,
+        consultation_id: str,
+        *,
+        allow_existing: bool = False,
+    ) -> None:
+        with self._active_lock:
+            if allow_existing and consultation_id in self._active_consultations:
+                return
+            if len(self._active_consultations) >= self._maximum_active_consultations:
+                raise ActiveSessionLimitExceeded(
+                    "The service is at its active consultation limit. Please retry later."
+                )
+            self._active_consultations.add(consultation_id)
+
+    def _release_execution(self, consultation_id: str) -> None:
+        with self._active_lock:
+            self._active_consultations.discard(consultation_id)
 
     @staticmethod
     def _response(state: BuildWiseFlowState) -> ConsultationResponse:

@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, cast
 
 import structlog
 from fastapi import FastAPI, Request
@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from buildwise.domain.exceptions import ActiveSessionLimitExceeded, RateLimitExceeded
 from buildwise.domain.guardrails import InputGuardrailViolation
 from buildwise.observability.context import get_request_id
 
@@ -66,6 +67,26 @@ def register_exception_handlers(app: FastAPI) -> None:
             stage="input_guardrail",
         )
 
+    @app.exception_handler(RateLimitExceeded)
+    @app.exception_handler(ActiveSessionLimitExceeded)
+    async def handle_capacity_limit(
+        request: Request,
+        exc: RateLimitExceeded | ActiveSessionLimitExceeded,
+    ) -> JSONResponse:
+        logger.warning(
+            "request_capacity_rejected",
+            path=request.url.path,
+            status="rejected",
+            error_code="CAPACITY_LIMIT_EXCEEDED",
+        )
+        return _response(
+            status_code=429,
+            code="CAPACITY_LIMIT_EXCEEDED",
+            message=str(exc),
+            recoverable=True,
+            stage="rate_limit",
+        )
+
     @app.exception_handler(RequestValidationError)
     async def handle_request_validation(
         request: Request,
@@ -83,7 +104,7 @@ def register_exception_handlers(app: FastAPI) -> None:
             message="The request payload is invalid.",
             recoverable=True,
             stage="request_validation",
-            details=exc.errors(),
+            details=cast(list[dict[str, Any]], exc.errors()),
         )
 
     @app.exception_handler(StarletteHTTPException)

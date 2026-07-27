@@ -1,5 +1,8 @@
 """Canonical BuildWise domain models."""
 
+# This package intentionally preserves its historical re-export surface.
+# ruff: noqa: F403
+
 from buildwise.domain.ai_architecture import *
 from buildwise.domain.architecture import *
 from buildwise.domain.blueprint import *
