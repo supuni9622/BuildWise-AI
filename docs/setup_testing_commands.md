@@ -1,126 +1,77 @@
-# BuildWise AI — Development, Testing, and Docker Command Guide
+# BuildWise AI — Setup, Testing, and Docker Commands
 
-## Purpose
+This is the operational command reference for the current implementation.
+Run commands from the repository root unless a section says otherwise.
 
-This document contains the commands required to:
+## 1. Prerequisites
 
-- install the project
-- configure the environment
-- run BuildWise locally
-- run PostgreSQL
-- run the CrewAI smoke Flow
-- run linting and type checks
-- run tests and coverage
-- build and run Docker containers
-- inspect logs and container health
-- connect to PostgreSQL
-- validate OpenAI and Anthropic integrations
-- clean up the local environment
+- Python 3.12
+- [`uv`](https://docs.astral.sh/uv/)
+- Docker Desktop or Docker Engine with Compose
+- Node.js 22.13 or newer
+- npm
+- Git
 
-Run all commands from the project root, where these files are located:
-
-```text
-pyproject.toml
-docker-compose.yml
-Dockerfile
-.env.example
-```
-
----
-
-# 1. Prerequisites
-
-Ensure the following tools are installed:
-
-```text
-Python 3.12
-uv
-Docker Desktop
-Docker Compose
-Git
-```
-
-Verify them:
-
-```bash
-python3 --version
-```
+Verify:
 
 ```bash
 uv --version
-```
-
-```bash
 docker --version
-```
-
-```bash
 docker compose version
-```
-
-```bash
+node --version
+npm --version
 git --version
 ```
 
----
+## 2. Install the backend
 
-# 2. Install Python 3.12
-
-Install Python 3.12 through `uv`:
+Install Python and the locked dependencies:
 
 ```bash
 uv python install 3.12
+uv sync --frozen
 ```
 
-Verify the installed interpreter:
+Use this only when intentionally updating dependencies:
 
 ```bash
-uv python list
+uv lock
+uv sync
 ```
 
----
+Verify imports:
 
-# 3. Create the Environment File
+```bash
+uv run python --version
+uv run python -c "import crewai; print(crewai.__version__)"
+uv run python -c "from buildwise.main import app; print(app.title)"
+```
 
-Copy the committed environment template:
+## 3. Configure the environment
+
+Create the local environment file:
 
 ```bash
 cp .env.example .env
 ```
 
-Open `.env` and add the provider and research keys you intend to use:
+Minimum provider configuration:
 
 ```env
 OPENAI_API_KEY=your-openai-api-key
-ANTHROPIC_API_KEY=your-anthropic-api-key
+```
+
+Optional live web research:
+
+```env
 SERPER_API_KEY=your-serper-api-key
 ```
 
-`SERPER_API_KEY` enables the Market & GTM Strategist's `web_search` tool.
-Create a key through the [Serper API dashboard](https://serper.dev/), add it
-to `.env`, and restart the backend so the agent factory reads the new
-environment value.
+Create a Serper key at [serper.dev](https://serper.dev/). Without it,
+consultations can still run, but live Market & GTM research is omitted and
+disclosed as an evidence limitation.
 
-If `SERPER_API_KEY` is omitted, BuildWise can still complete a consultation,
-but live market and competitor research is unavailable. The Market & GTM
-output will record the missing research as an evidence gap or limitation
-instead of fabricating external evidence.
-
-For initial development, keep Claude evaluation disabled:
-
-```env
-EVALUATION_ENABLED=false
-CROSS_PROVIDER_EVALUATION_ENABLED=false
-EVALUATION_SAMPLE_RATE=0.0
-```
-
-Keep automatic model fallback disabled until the fallback runtime has been implemented:
-
-```env
-MODEL_FALLBACK_ENABLED=false
-```
-
-The active workflow should initially use OpenAI:
+The active model defaults are:
 
 ```env
 FAST_MODEL=openai/gpt-5-mini
@@ -129,638 +80,17 @@ ARCHITECT_MODEL=openai/gpt-5.2
 LEAD_REVIEWER_MODEL=openai/gpt-5.2
 ```
 
-Claude remains configured for later evaluation:
+Keep unimplemented evaluation/fallback paths disabled:
 
 ```env
-EVALUATION_MODEL=anthropic/claude-sonnet-5
-STRONG_EVALUATION_MODEL=anthropic/claude-opus-4-8
+MODEL_FALLBACK_ENABLED=false
+EVALUATION_ENABLED=false
+CROSS_PROVIDER_EVALUATION_ENABLED=false
 ```
 
----
+## 4. PostgreSQL for local backend execution
 
-# 4. Install Project Dependencies
-
-Create or update the lock file:
-
-```bash
-uv lock
-```
-
-Install production and development dependencies:
-
-```bash
-uv sync --all-groups
-```
-
-For future installations using the committed lock file:
-
-```bash
-uv sync --frozen --all-groups
-```
-
-Verify that the project virtual environment exists:
-
-```bash
-ls -la .venv
-```
-
----
-
-# 5. Verify Installed Dependencies
-
-## Verify Python
-
-```bash
-uv run python --version
-```
-
-## Verify CrewAI
-
-```bash
-uv run python -c "import crewai; print(crewai.__version__)"
-```
-
-## Verify FastAPI
-
-```bash
-uv run python -c "import fastapi; print(fastapi.__version__)"
-```
-
-## Verify OpenAI SDK
-
-```bash
-uv run python -c "import openai; print('OpenAI SDK installed successfully')"
-```
-
-## Verify Anthropic SDK
-
-```bash
-uv run python -c "import anthropic; print('Anthropic SDK installed successfully')"
-```
-
-## Verify both providers together
-
-```bash
-uv run python -c "import openai, anthropic; print('OpenAI and Anthropic SDKs installed successfully')"
-```
-
-## Verify the BuildWise package import
-
-```bash
-uv run python -c "import buildwise; print('BuildWise package imported successfully')"
-```
-
-## Verify the FastAPI application import
-
-```bash
-uv run python -c "from buildwise.main import app; print(app.title)"
-```
-
----
-
-# 6. Local Development with Docker PostgreSQL
-
-The local `.env` uses PostgreSQL on:
-
-```text
-localhost:5432
-```
-
-Start only PostgreSQL through Docker:
-
-```bash
-docker compose up -d postgres
-```
-
-Check the container status:
-
-```bash
-docker compose ps
-```
-
-Check PostgreSQL health directly:
-
-```bash
-docker compose exec postgres \
-  pg_isready -U buildwise -d buildwise
-```
-
-Follow PostgreSQL logs:
-
-```bash
-docker compose logs -f postgres
-```
-
-Show only the latest PostgreSQL logs:
-
-```bash
-docker compose logs --tail=100 postgres
-```
-
----
-
-# 7. Run the FastAPI Application Locally
-
-Start PostgreSQL first:
-
-```bash
-docker compose up -d postgres
-```
-
-Then start the API outside Docker:
-
-```bash
-uv run uvicorn buildwise.main:app \
-  --reload \
-  --host 0.0.0.0 \
-  --port 8000
-```
-
-The API should be available at:
-
-```text
-http://localhost:8000
-```
-
-Useful endpoints:
-
-```text
-http://localhost:8000/health
-http://localhost:8000/ready
-http://localhost:8000/docs
-http://localhost:8000/redoc
-```
-
-Open Swagger documentation on macOS:
-
-```bash
-open http://localhost:8000/docs
-```
-
-Open ReDoc on macOS:
-
-```bash
-open http://localhost:8000/redoc
-```
-
----
-
-# 8. Test Health and Readiness Endpoints
-
-## Health endpoint
-
-```bash
-curl http://localhost:8000/health
-```
-
-Pretty-print the response:
-
-```bash
-curl -s http://localhost:8000/health | python -m json.tool
-```
-
-## Readiness endpoint
-
-```bash
-curl http://localhost:8000/ready
-```
-
-Pretty-print the response:
-
-```bash
-curl -s http://localhost:8000/ready | python -m json.tool
-```
-
-## Show response headers
-
-```bash
-curl -i http://localhost:8000/health
-```
-
-```bash
-curl -i http://localhost:8000/ready
-```
-
-Use this to verify that request or correlation IDs are included in response headers.
-
----
-
-# 9. Run the CrewAI Smoke Flow
-
-Run the Phase 0 CrewAI Flow:
-
-```bash
-uv run python -m buildwise.flows.smoke
-```
-
-This verifies:
-
-- BuildWise package imports
-- CrewAI initialization
-- Flow state initialization
-- `@start()` execution
-- `@listen()` execution
-- Flow completion
-- no external LLM call is required
-
-Run it with CrewAI tracing enabled:
-
-```bash
-CREWAI_TRACING_ENABLED=true \
-uv run python -m buildwise.flows.smoke
-```
-
-Run it with tracing disabled:
-
-```bash
-CREWAI_TRACING_ENABLED=false \
-uv run python -m buildwise.flows.smoke
-```
-
----
-
-# 10. CrewAI Tracing Commands
-
-Check the CrewAI tracing status:
-
-```bash
-uv run crewai traces status
-```
-
-Enable CrewAI tracing:
-
-```bash
-uv run crewai traces enable
-```
-
-Disable CrewAI tracing:
-
-```bash
-uv run crewai traces disable
-```
-
-The application environment can also control tracing:
-
-```env
-CREWAI_TRACING_ENABLED=true
-```
-
----
-
-# 11. Ruff Linting Commands
-
-Run Ruff against the source and test directories:
-
-```bash
-uv run ruff check src tests
-```
-
-Apply safe automatic fixes:
-
-```bash
-uv run ruff check src tests --fix
-```
-
-Show detailed lint output:
-
-```bash
-uv run ruff check src tests --show-fixes
-```
-
-Run Ruff against only the application source:
-
-```bash
-uv run ruff check src
-```
-
-Run Ruff against a specific file:
-
-```bash
-uv run ruff check src/buildwise/main.py
-```
-
----
-
-# 12. Ruff Formatting Commands
-
-Check formatting without modifying files:
-
-```bash
-uv run ruff format --check src tests
-```
-
-Format all source and test files:
-
-```bash
-uv run ruff format src tests
-```
-
-Check one file:
-
-```bash
-uv run ruff format --check src/buildwise/main.py
-```
-
-Format one file:
-
-```bash
-uv run ruff format src/buildwise/main.py
-```
-
----
-
-# 13. Mypy Commands
-
-Run strict type checking:
-
-```bash
-uv run mypy src
-```
-
-Run mypy against a specific package:
-
-```bash
-uv run mypy src/buildwise
-```
-
-Run mypy against a specific file:
-
-```bash
-uv run mypy src/buildwise/main.py
-```
-
-Show error codes:
-
-```bash
-uv run mypy src --show-error-codes
-```
-
----
-
-# 14. Pytest Commands
-
-The project may initially contain no generated test files. In that case, pytest may report that no tests were collected.
-
-## Run all tests
-
-```bash
-uv run pytest
-```
-
-## Run tests with verbose output
-
-```bash
-uv run pytest -v
-```
-
-## Run tests with very verbose output
-
-```bash
-uv run pytest -vv
-```
-
-## Stop after the first failure
-
-```bash
-uv run pytest -x
-```
-
-## Stop after a specific number of failures
-
-```bash
-uv run pytest --maxfail=3
-```
-
-## Show print statements and live output
-
-```bash
-uv run pytest -s
-```
-
-## Run one test file
-
-```bash
-uv run pytest tests/path/to/test_file.py -v
-```
-
-Example:
-
-```bash
-uv run pytest tests/unit/test_settings.py -v
-```
-
-## Run one test case
-
-```bash
-uv run pytest \
-  tests/path/to/test_file.py::test_case_name \
-  -v
-```
-
-Example:
-
-```bash
-uv run pytest \
-  tests/unit/test_settings.py::test_default_settings \
-  -v
-```
-
-## Run tests matching a keyword
-
-```bash
-uv run pytest -k "settings"
-```
-
-## Run unit tests
-
-```bash
-uv run pytest -m unit
-```
-
-## Run integration tests
-
-```bash
-uv run pytest -m integration
-```
-
-## Run slow tests
-
-```bash
-uv run pytest -m slow
-```
-
-## Exclude slow tests
-
-```bash
-uv run pytest -m "not slow"
-```
-
-## Run unit tests while excluding slow tests
-
-```bash
-uv run pytest -m "unit and not slow"
-```
-
----
-
-# 15. Coverage Commands
-
-Run tests with terminal coverage:
-
-```bash
-uv run pytest \
-  --cov=buildwise \
-  --cov-report=term-missing
-```
-
-Generate both terminal and HTML coverage reports:
-
-```bash
-uv run pytest \
-  --cov=buildwise \
-  --cov-report=term-missing \
-  --cov-report=html
-```
-
-Open the generated HTML report on macOS:
-
-```bash
-open htmlcov/index.html
-```
-
-Generate an XML coverage report for CI:
-
-```bash
-uv run pytest \
-  --cov=buildwise \
-  --cov-report=xml
-```
-
-Generate all common coverage reports:
-
-```bash
-uv run pytest \
-  --cov=buildwise \
-  --cov-report=term-missing \
-  --cov-report=html \
-  --cov-report=xml
-```
-
----
-
-# 16. Run All Local Quality Checks
-
-Run linting, formatting, type checking, import verification, and the CrewAI smoke Flow:
-
-```bash
-uv run ruff check src tests && \
-uv run ruff format --check src tests && \
-uv run mypy src && \
-uv run python -c "from buildwise.main import app; print(app.title)" && \
-uv run python -m buildwise.flows.smoke
-```
-
-Once actual tests exist:
-
-```bash
-uv run ruff check src tests && \
-uv run ruff format --check src tests && \
-uv run mypy src && \
-uv run pytest && \
-uv run python -m buildwise.flows.smoke
-```
-
-Run the complete provider import verification:
-
-```bash
-uv run python -c "import openai, anthropic, crewai; print('Provider and CrewAI imports passed')"
-```
-
----
-
-# 17. Validate Docker Compose
-
-Validate the Compose YAML and resolved configuration:
-
-```bash
-docker compose config
-```
-
-Validate without printing the resolved configuration:
-
-```bash
-docker compose config --quiet
-```
-
-Be careful when sharing `docker compose config` output because resolved environment values may include secrets.
-
-List Compose services:
-
-```bash
-docker compose config --services
-```
-
-List Compose volumes:
-
-```bash
-docker compose config --volumes
-```
-
----
-
-# 18. Build Docker Images
-
-Build all services:
-
-```bash
-docker compose build
-```
-
-Build only the API image:
-
-```bash
-docker compose build api
-```
-
-Build with updated dependencies:
-
-```bash
-docker compose build --pull
-```
-
-Force a clean build without cached layers:
-
-```bash
-docker compose build --no-cache
-```
-
-Force a clean API-only build:
-
-```bash
-docker compose build --no-cache api
-```
-
----
-
-# 19. Start the Full Docker Stack
-
-Build and start all services:
-
-```bash
-docker compose up --build
-```
-
-Build and start all services in detached mode:
-
-```bash
-docker compose up -d --build
-```
-
-Start existing images without rebuilding:
-
-```bash
-docker compose up -d
-```
+The example environment expects PostgreSQL on `localhost:5432`.
 
 Start only PostgreSQL:
 
@@ -768,509 +98,46 @@ Start only PostgreSQL:
 docker compose up -d postgres
 ```
 
-Start only the API:
-
-```bash
-docker compose up -d api
-```
-
-The API service depends on PostgreSQL being healthy.
-
----
-
-# 20. Inspect Docker Service Status
-
-Show service status:
+Inspect status and health:
 
 ```bash
 docker compose ps
+docker compose exec postgres pg_isready -U buildwise -d buildwise
 ```
 
-Show all containers, including stopped containers:
-
-```bash
-docker compose ps -a
-```
-
-Show Docker images used by the project:
-
-```bash
-docker compose images
-```
-
-Show currently running Docker containers:
-
-```bash
-docker ps
-```
-
-Show all Docker containers:
-
-```bash
-docker ps -a
-```
-
----
-
-# 21. Docker Log Commands
-
-Follow all service logs:
-
-```bash
-docker compose logs -f
-```
-
-Follow API logs:
-
-```bash
-docker compose logs -f api
-```
-
-Follow PostgreSQL logs:
+Follow or inspect logs:
 
 ```bash
 docker compose logs -f postgres
-```
-
-Show the last 100 API log lines:
-
-```bash
-docker compose logs --tail=100 api
-```
-
-Show the last 100 PostgreSQL log lines:
-
-```bash
 docker compose logs --tail=100 postgres
 ```
 
-Show timestamps:
+Open a PostgreSQL shell:
 
 ```bash
-docker compose logs -f --timestamps api
+docker compose exec postgres psql -U buildwise -d buildwise
 ```
 
-Show logs generated during the last 10 minutes:
-
-```bash
-docker compose logs --since=10m api
-```
-
----
-
-# 22. Test the Dockerized Application
-
-Start the stack:
-
-```bash
-docker compose up -d --build
-```
-
-Check container health:
-
-```bash
-docker compose ps
-```
-
-Test the health endpoint:
-
-```bash
-curl http://localhost:8000/health
-```
-
-Pretty-print the health response:
-
-```bash
-curl -s http://localhost:8000/health | python -m json.tool
-```
-
-Test the readiness endpoint:
-
-```bash
-curl http://localhost:8000/ready
-```
-
-Pretty-print the readiness response:
-
-```bash
-curl -s http://localhost:8000/ready | python -m json.tool
-```
-
-Open Swagger documentation on macOS:
-
-```bash
-open http://localhost:8000/docs
-```
-
----
-
-# 23. Execute Commands Inside the API Container
-
-Open a shell inside the API container:
-
-```bash
-docker compose exec api sh
-```
-
-Check Python:
-
-```bash
-docker compose exec api python --version
-```
-
-Check CrewAI:
-
-```bash
-docker compose exec api \
-  python -c "import crewai; print(crewai.__version__)"
-```
-
-Check the BuildWise application import:
-
-```bash
-docker compose exec api \
-  python -c "from buildwise.main import app; print(app.title)"
-```
-
-Verify OpenAI:
-
-```bash
-docker compose exec api \
-  python -c "import openai; print('OpenAI SDK installed')"
-```
-
-Verify Anthropic:
-
-```bash
-docker compose exec api \
-  python -c "import anthropic; print('Anthropic SDK installed')"
-```
-
-Verify both providers:
-
-```bash
-docker compose exec api \
-  python -c "import openai, anthropic; print('Both provider SDKs installed')"
-```
-
-Run the CrewAI smoke Flow:
-
-```bash
-docker compose exec api \
-  python -m buildwise.flows.smoke
-```
-
-Print selected environment variables without printing API keys:
-
-```bash
-docker compose exec api \
-  python -c "
-import os
-for name in [
-    'APP_ENV',
-    'DATABASE_URL',
-    'FAST_MODEL',
-    'PRIMARY_AGENT_MODEL',
-    'ARCHITECT_MODEL',
-    'LEAD_REVIEWER_MODEL',
-    'EVALUATION_MODEL',
-    'MODEL_FALLBACK_ENABLED',
-    'EVALUATION_ENABLED',
-]:
-    print(f'{name}={os.getenv(name)}')
-"
-```
-
----
-
-# 24. Run One-Off Docker Commands
-
-Run the CrewAI smoke Flow in a temporary container:
-
-```bash
-docker compose run --rm api \
-  python -m buildwise.flows.smoke
-```
-
-Verify the FastAPI application import:
-
-```bash
-docker compose run --rm api \
-  python -c "from buildwise.main import app; print(app.title)"
-```
-
-Verify both provider SDKs:
-
-```bash
-docker compose run --rm api \
-  python -c "import openai, anthropic; print('Provider SDKs available')"
-```
-
-The production Docker image may not contain development dependencies such as:
+Useful `psql` commands:
 
 ```text
-pytest
-ruff
-mypy
+\dt
+\d consultations
+\d artifacts
+\d clarification_rounds
+\d revisions
+\d usage
+\d blueprint_reports
+\q
 ```
 
-Run those locally or in CI unless the Dockerfile explicitly installs the development dependency group.
-
----
-
-# 25. Restart Docker Services
-
-Restart all services:
-
-```bash
-docker compose restart
-```
-
-Restart only the API:
-
-```bash
-docker compose restart api
-```
-
-Restart only PostgreSQL:
-
-```bash
-docker compose restart postgres
-```
-
-Recreate the API container after configuration changes:
-
-```bash
-docker compose up -d --force-recreate api
-```
-
-Rebuild and recreate the API:
-
-```bash
-docker compose up -d --build --force-recreate api
-```
-
----
-
-# 26. Stop Docker Services
-
-Stop services without removing containers:
-
-```bash
-docker compose stop
-```
-
-Stop only the API:
-
-```bash
-docker compose stop api
-```
-
-Stop only PostgreSQL:
+Stop PostgreSQL without deleting data:
 
 ```bash
 docker compose stop postgres
 ```
 
-Remove containers and the project network:
-
-```bash
-docker compose down
-```
-
-Remove orphaned containers:
-
-```bash
-docker compose down --remove-orphans
-```
-
-Remove local project images:
-
-```bash
-docker compose down --rmi local
-```
-
-Remove all project images:
-
-```bash
-docker compose down --rmi all
-```
-
----
-
-# 27. Remove PostgreSQL Data
-
-Remove containers, networks, and named volumes:
-
-```bash
-docker compose down -v
-```
-
-This permanently deletes the local BuildWise PostgreSQL data.
-
-Use this only when you intentionally want a clean database.
-
-Recreate the environment afterward:
-
-```bash
-docker compose up -d --build
-```
-
----
-
-# 28. PostgreSQL Commands
-
-Open a PostgreSQL shell:
-
-```bash
-docker compose exec postgres \
-  psql -U buildwise -d buildwise
-```
-
-List databases:
-
-```bash
-docker compose exec postgres \
-  psql -U buildwise -d buildwise -c "\l"
-```
-
-List schemas:
-
-```bash
-docker compose exec postgres \
-  psql -U buildwise -d buildwise -c "\dn"
-```
-
-List tables:
-
-```bash
-docker compose exec postgres \
-  psql -U buildwise -d buildwise -c "\dt"
-```
-
-Describe a table:
-
-```bash
-docker compose exec postgres \
-  psql -U buildwise -d buildwise -c "\d table_name"
-```
-
-Check the current database user:
-
-```bash
-docker compose exec postgres \
-  psql -U buildwise -d buildwise \
-  -c "SELECT current_user;"
-```
-
-Check the PostgreSQL version:
-
-```bash
-docker compose exec postgres \
-  psql -U buildwise -d buildwise \
-  -c "SELECT version();"
-```
-
-Check database readiness:
-
-```bash
-docker compose exec postgres \
-  pg_isready -U buildwise -d buildwise
-```
-
----
-
-# 29. Inspect Docker Environment Variables
-
-View environment variables inside the API container:
-
-```bash
-docker compose exec api env
-```
-
-Filter only model-related variables:
-
-```bash
-docker compose exec api env | grep MODEL
-```
-
-Filter provider-related variables:
-
-```bash
-docker compose exec api env | grep -E "OPENAI|ANTHROPIC"
-```
-
-Do not copy or share output containing real API keys.
-
-Check whether OpenAI is configured without printing the key:
-
-```bash
-docker compose exec api \
-  python -c "
-import os
-print('OPENAI_API_KEY configured:', bool(os.getenv('OPENAI_API_KEY')))
-"
-```
-
-Check whether Anthropic is configured without printing the key:
-
-```bash
-docker compose exec api \
-  python -c "
-import os
-print('ANTHROPIC_API_KEY configured:', bool(os.getenv('ANTHROPIC_API_KEY')))
-"
-```
-
----
-
-# 30. Dependency Maintenance Commands
-
-Show the dependency tree:
-
-```bash
-uv tree
-```
-
-Show outdated packages:
-
-```bash
-uv tree --outdated
-```
-
-Recreate the lock file after changing `pyproject.toml`:
-
-```bash
-uv lock
-```
-
-Upgrade dependencies within the configured version constraints:
-
-```bash
-uv lock --upgrade
-```
-
-Synchronize the environment:
-
-```bash
-uv sync --all-groups
-```
-
-Synchronize strictly from the lock file:
-
-```bash
-uv sync --frozen --all-groups
-```
-
-Remove packages that are no longer declared:
-
-```bash
-uv sync --all-groups
-```
-
----
-
-# 31. Recommended Daily Development Workflow
+## 5. Run the backend locally
 
 Start PostgreSQL:
 
@@ -1278,398 +145,649 @@ Start PostgreSQL:
 docker compose up -d postgres
 ```
 
-Start the application locally:
+Run FastAPI on the port expected by the frontend:
 
 ```bash
 uv run uvicorn buildwise.main:app \
   --reload \
   --host 0.0.0.0 \
-  --port 8000
+  --port 8080
 ```
 
-Run the CrewAI smoke Flow when Flow-related code changes:
+Endpoints:
+
+- `http://localhost:8080/health`
+- `http://localhost:8080/ready`
+- `http://localhost:8080/docs`
+- `http://localhost:8080/redoc`
+- `http://localhost:8080/api/v1`
+
+Import/startup smoke test without running a server:
 
 ```bash
-uv run python -m buildwise.flows.smoke
+DEBUG=false APP_ENV=test CREWAI_TRACING_ENABLED=false \
+  uv run python -c "from buildwise.main import app; print(app.title)"
 ```
 
-Before committing:
+## 6. Run the frontend
+
+In a second terminal:
 
 ```bash
-uv run ruff check src tests
+cd web
+npm install
+npm run dev
 ```
 
+Open [http://localhost:3000](http://localhost:3000).
+
+The default API URL is `http://localhost:8080/api/v1`. To override it:
+
 ```bash
-uv run ruff format --check src tests
+cd web
+cp .env.example .env.local
 ```
 
-```bash
-uv run mypy src
+Set:
+
+```env
+NEXT_PUBLIC_BUILDWISE_API_URL=http://localhost:8080/api/v1
 ```
 
+The frontend also supports changing and saving the API URL from its settings
+control.
+
+## 7. API verification commands
+
+Health:
+
 ```bash
-uv run pytest
+curl --fail --silent http://localhost:8080/health | python -m json.tool
 ```
 
+Readiness:
+
 ```bash
-uv run python -m buildwise.flows.smoke
+curl --silent http://localhost:8080/ready | python -m json.tool
 ```
 
-Stop PostgreSQL when finished:
+API version root:
 
 ```bash
-docker compose stop postgres
+curl --fail --silent http://localhost:8080/api/v1 | python -m json.tool
 ```
 
----
-
-# 32. Recommended Full Local Verification
-
-Run:
+Request ID propagation:
 
 ```bash
-uv sync --frozen --all-groups
+curl --include \
+  -H "X-Request-ID: buildwise-local-test-001" \
+  http://localhost:8080/health
 ```
 
+Start a consultation:
+
 ```bash
-docker compose up -d postgres
+curl --fail-with-body \
+  --request POST \
+  --header "Content-Type: application/json" \
+  --data '{
+    "title": "Team Scheduler",
+    "idea": "Build a scheduling product for distributed software teams.",
+    "target_users": ["distributed software teams"],
+    "known_features": ["timezone-aware availability"],
+    "target_platforms": ["web"],
+    "delivery_expectation": "mvp",
+    "submission_channel": "api"
+  }' \
+  http://localhost:8080/api/v1/consultations
 ```
 
-```bash
-uv run ruff check src tests
-```
+Save the returned consultation ID:
 
 ```bash
-uv run ruff format --check src tests
-```
-
-```bash
-uv run mypy src
-```
-
-```bash
-uv run pytest
-```
-
-```bash
-uv run python -c "from buildwise.main import app; print(app.title)"
-```
-
-```bash
-uv run python -m buildwise.flows.smoke
-```
-
-Start the API:
-
-```bash
-uv run uvicorn buildwise.main:app \
-  --host 0.0.0.0 \
-  --port 8000
-```
-
-Then, from another terminal:
-
-```bash
-curl -s http://localhost:8000/health | python -m json.tool
-```
-
-```bash
-curl -s http://localhost:8000/ready | python -m json.tool
-```
-
----
-
-# 33. Recommended Full Docker Verification
-
-Validate Compose:
-
-```bash
-docker compose config --quiet
-```
-
-Build the stack:
-
-```bash
-docker compose build
-```
-
-Start all services:
-
-```bash
-docker compose up -d
+export BUILDWISE_CONSULTATION_ID="replace-with-consultation-id"
 ```
 
 Check status:
 
 ```bash
-docker compose ps
+curl --fail-with-body \
+  "http://localhost:8080/api/v1/consultations/${BUILDWISE_CONSULTATION_ID}" \
+  | python -m json.tool
 ```
 
-Inspect API logs:
+Get a completed result:
 
 ```bash
-docker compose logs --tail=100 api
+curl --fail-with-body \
+  "http://localhost:8080/api/v1/consultations/${BUILDWISE_CONSULTATION_ID}/result" \
+  | python -m json.tool
 ```
 
-Inspect PostgreSQL logs:
+Clarification submission requires the current round and question IDs returned
+by the status endpoint:
 
 ```bash
-docker compose logs --tail=100 postgres
+curl --fail-with-body \
+  --request POST \
+  --header "Content-Type: application/json" \
+  --data '{
+    "clarification_round": 1,
+    "answers": [
+      {
+        "question_id": "replace-with-question-id",
+        "answer": "Small distributed product teams"
+      }
+    ]
+  }' \
+  "http://localhost:8080/api/v1/consultations/${BUILDWISE_CONSULTATION_ID}/clarifications"
 ```
 
-Test the health endpoint:
+## 8. Blueprint report storage
 
-```bash
-curl -s http://localhost:8000/health | python -m json.tool
+### Local filesystem
+
+Default configuration:
+
+```env
+REPORT_STORAGE_BACKEND=filesystem
+REPORT_STORAGE_PATH=data/reports
+STORE_BLUEPRINT_JSON=false
 ```
 
-Test the readiness endpoint:
+Output:
 
-```bash
-curl -s http://localhost:8000/ready | python -m json.tool
+```text
+data/reports/{consultation_id}/blueprint.md
 ```
 
-Run the CrewAI smoke Flow inside Docker:
+Set `STORE_BLUEPRINT_JSON=true` to also write `blueprint.json`.
+
+Inspect local reports:
 
 ```bash
-docker compose exec api \
-  python -m buildwise.flows.smoke
+find data/reports -maxdepth 3 -type f -print
 ```
 
-Verify the application import:
+### S3
 
-```bash
-docker compose exec api \
-  python -c "from buildwise.main import app; print(app.title)"
+Create the bucket, then configure:
+
+```env
+REPORT_STORAGE_BACKEND=s3
+S3_REPORT_BUCKET=your-buildwise-reports-bucket
+AWS_REGION=ap-south-1
+STORE_BLUEPRINT_JSON=false
 ```
 
-Verify provider SDKs:
+Use the standard AWS credential chain. For temporary local credentials:
 
-```bash
-docker compose exec api \
-  python -c "import openai, anthropic; print('Provider SDKs installed')"
+```env
+AWS_ACCESS_KEY_ID=your-access-key-id
+AWS_SECRET_ACCESS_KEY=your-secret-access-key
+AWS_SESSION_TOKEN=your-session-token
 ```
 
-Stop the stack:
+Prefer IAM roles or workload identity in deployed environments. The runtime
+needs `s3:PutObject` for:
 
-```bash
-docker compose down
+```text
+arn:aws:s3:::your-buildwise-reports-bucket/consultations/*
 ```
 
----
+Report keys:
 
-# 34. Fresh Installation Sequence
-
-Use this sequence on a new development machine.
-
-Install Python:
-
-```bash
-uv python install 3.12
+```text
+consultations/{consultation_id}/blueprints/v1/blueprint.md
+consultations/{consultation_id}/blueprints/v1/blueprint.json
 ```
 
-Create the environment file:
+For MinIO, LocalStack, or another S3-compatible service:
 
-```bash
-cp .env.example .env
+```env
+S3_ENDPOINT_URL=http://localhost:4566
 ```
 
-Add API keys to `.env`.
+## 9. Runtime safety settings
 
-Create the lock file:
+Defaults:
 
-```bash
-uv lock
+```env
+MAX_SESSION_TOKENS=120000
+MAX_ESTIMATED_COST_USD=10.00
+MAX_AGENT_EXECUTIONS=20
+MAX_TOOL_CALLS=30
+MAX_EXECUTION_SECONDS=900
+MAX_RETRIES_PER_OPERATION=2
+
+API_RATE_LIMIT_REQUESTS=30
+API_RATE_LIMIT_WINDOW_SECONDS=60
+MAX_ACTIVE_CONSULTATIONS=10
 ```
 
-Install dependencies:
+Crew and governed-tool executions consume persisted session budgets. API and
+active-session limits are process-local and intended for the single-process
+MVP.
 
-```bash
-uv sync --all-groups
+Tracing and verbosity:
+
+```env
+CREWAI_TRACING_ENABLED=false
+CREWAI_VERBOSE=false
 ```
 
-Start PostgreSQL:
+Disable tracing for tests and offline local checks.
+
+## 10. Backend tests and static checks
+
+Run the CrewAI Flow smoke test:
 
 ```bash
-docker compose up -d postgres
+DEBUG=false APP_ENV=test CREWAI_TRACING_ENABLED=false \
+  uv run python -m buildwise.flows.smoke
 ```
 
-Run quality checks:
+Run all tests:
 
 ```bash
-uv run ruff check src tests
-```
-
-```bash
-uv run ruff format --check src tests
-```
-
-```bash
-uv run mypy src
-```
-
-Run the CrewAI smoke Flow:
-
-```bash
-uv run python -m buildwise.flows.smoke
-```
-
-Start the application:
-
-```bash
-uv run uvicorn buildwise.main:app \
-  --reload \
-  --host 0.0.0.0 \
-  --port 8000
-```
-
-Verify the application:
-
-```bash
-curl -s http://localhost:8000/health | python -m json.tool
-```
-
-```bash
-curl -s http://localhost:8000/ready | python -m json.tool
-```
-
----
-
-# 35. Quick Command Reference
-
-## Install
-
-```bash
-cp .env.example .env
-uv lock
-uv sync --all-groups
-```
-
-## Run locally
-
-```bash
-docker compose up -d postgres
-```
-
-```bash
-uv run uvicorn buildwise.main:app \
-  --reload \
-  --host 0.0.0.0 \
-  --port 8000
-```
-
-## Run smoke Flow
-
-```bash
-uv run python -m buildwise.flows.smoke
-```
-
-## Run checks
-
-```bash
-uv run ruff check src tests
-uv run ruff format --check src tests
-uv run mypy src
+DEBUG=false APP_ENV=test \
+CREWAI_TRACING_ENABLED=false CREWAI_DISABLE_TELEMETRY=true \
+OTEL_SDK_DISABLED=true \
 uv run pytest
 ```
 
-## Run Docker
+Run concise tests:
 
 ```bash
-docker compose up -d --build
+DEBUG=false APP_ENV=test \
+CREWAI_TRACING_ENABLED=false CREWAI_DISABLE_TELEMETRY=true \
+OTEL_SDK_DISABLED=true \
+uv run pytest -q
 ```
 
-## Check Docker
+Run one file:
+
+```bash
+DEBUG=false APP_ENV=test \
+CREWAI_TRACING_ENABLED=false CREWAI_DISABLE_TELEMETRY=true \
+OTEL_SDK_DISABLED=true \
+uv run pytest tests/unit/application/test_runtime_budget.py -q
+```
+
+Run one test by name:
+
+```bash
+DEBUG=false APP_ENV=test \
+CREWAI_TRACING_ENABLED=false CREWAI_DISABLE_TELEMETRY=true \
+OTEL_SDK_DISABLED=true \
+uv run pytest -k "runtime_budget" -q
+```
+
+Coverage equivalent to the CI threshold:
+
+```bash
+DEBUG=false APP_ENV=test \
+CREWAI_TRACING_ENABLED=false CREWAI_DISABLE_TELEMETRY=true \
+OTEL_SDK_DISABLED=true \
+uv run pytest \
+  --cov=buildwise \
+  --cov-report=term-missing \
+  --cov-fail-under=70
+```
+
+Generate an HTML coverage report:
+
+```bash
+DEBUG=false APP_ENV=test \
+CREWAI_TRACING_ENABLED=false CREWAI_DISABLE_TELEMETRY=true \
+OTEL_SDK_DISABLED=true \
+uv run pytest \
+  --cov=buildwise \
+  --cov-report=html
+```
+
+Open `htmlcov/index.html` after the command completes.
+
+Ruff:
+
+```bash
+uv run ruff check src tests
+uv run ruff format --check src tests
+```
+
+Apply safe lint fixes and formatting:
+
+```bash
+uv run ruff check --fix src tests
+uv run ruff format src tests
+```
+
+Mypy:
+
+```bash
+uv run mypy src
+```
+
+Run the backend CI checks locally:
+
+```bash
+uv run ruff check src tests
+uv run mypy src
+DEBUG=false APP_ENV=test \
+CREWAI_TRACING_ENABLED=false CREWAI_DISABLE_TELEMETRY=true \
+OTEL_SDK_DISABLED=true \
+uv run pytest --cov=buildwise --cov-report=term-missing --cov-fail-under=70
+```
+
+## 11. Frontend checks
+
+Run from `web/`:
+
+```bash
+cd web
+npm install
+npm run lint
+npm run build
+npm test
+```
+
+Type-check without emitting files:
+
+```bash
+cd web
+npx tsc --noEmit
+```
+
+Run the production frontend locally:
+
+```bash
+cd web
+npm run build
+npm run start
+```
+
+## 12. Full Docker Compose stack
+
+The Compose API listens on container port `8000` and publishes the host
+`PORT` value. To keep the frontend default of port `8080`:
+
+```bash
+PORT=8080 docker compose up --build
+```
+
+Detached:
+
+```bash
+PORT=8080 docker compose up --build --detach
+```
+
+Build without starting:
+
+```bash
+docker compose build
+```
+
+Start an already-built stack:
+
+```bash
+PORT=8080 docker compose up --detach
+```
+
+Inspect services:
 
 ```bash
 docker compose ps
-docker compose logs --tail=100 api
+docker compose images
 ```
 
-## Test API
+Follow logs:
 
 ```bash
-curl -s http://localhost:8000/health | python -m json.tool
-curl -s http://localhost:8000/ready | python -m json.tool
+docker compose logs -f api
+docker compose logs -f postgres
+docker compose logs -f
 ```
 
-## Stop Docker
+Show recent logs:
+
+```bash
+docker compose logs --tail=100 api
+docker compose logs --tail=100 postgres
+```
+
+Check the Compose API:
+
+```bash
+curl --fail --silent http://localhost:8080/health | python -m json.tool
+curl --silent http://localhost:8080/ready | python -m json.tool
+```
+
+Inspect the non-root runtime user:
+
+```bash
+docker compose exec api whoami
+```
+
+Expected:
+
+```text
+buildwise
+```
+
+Open a shell in the API container:
+
+```bash
+docker compose exec api sh
+```
+
+Restart services:
+
+```bash
+docker compose restart api
+docker compose restart postgres
+```
+
+Stop and remove containers while preserving the database volume:
 
 ```bash
 docker compose down
 ```
 
-## Reset Docker and database
+Remove containers and the PostgreSQL volume:
 
 ```bash
-docker compose down -v
+docker compose down --volumes
 ```
 
----
+The last command permanently deletes the Compose-managed local database.
 
-# 36. Important Operational Notes
+## 13. Build and run only the API image
 
-## API Keys
-
-Never commit the real `.env` file.
-
-The repository should commit:
-
-```text
-.env.example
-```
-
-The repository should ignore:
-
-```text
-.env
-.env.local
-.env.*.local
-```
-
-## Claude Evaluation
-
-Claude evaluation remains disabled during the first development phases:
-
-```env
-EVALUATION_ENABLED=false
-CROSS_PROVIDER_EVALUATION_ENABLED=false
-```
-
-Enable evaluation only after the main OpenAI workflow is stable.
-
-## Model Fallbacks
-
-Fallback model environment variables do not implement fallback behavior by themselves.
-
-Keep:
-
-```env
-MODEL_FALLBACK_ENABLED=false
-```
-
-until the application implements:
-
-- failure classification
-- eligible fallback conditions
-- structured fallback logs
-- usage accounting
-- cost tracking
-- validation after fallback
-- maximum fallback attempts
-
-## Docker Development Dependencies
-
-The production Docker image may not contain Ruff, mypy, or pytest.
-
-Run those locally or in CI unless a dedicated development Docker stage is added.
-
-## Database Reset
-
-This command deletes local PostgreSQL data:
+Build:
 
 ```bash
-docker compose down -v
+docker build --tag buildwise-ai:local .
 ```
 
-Do not run it when you need to preserve existing consultations, artifacts, usage records, or evaluation results.
+Run with a local SQLite database for isolated image testing:
+
+```bash
+docker run --rm \
+  --name buildwise-api \
+  --publish 8080:8000 \
+  --env-file .env \
+  --env APP_ENV=local \
+  --env DATABASE_URL=sqlite:///./data/buildwise.db \
+  --env REPORT_STORAGE_BACKEND=filesystem \
+  --volume buildwise-api-data:/app/data \
+  buildwise-ai:local
+```
+
+In another terminal:
+
+```bash
+curl --fail --silent http://localhost:8080/health | python -m json.tool
+docker exec buildwise-api whoami
+docker logs --follow buildwise-api
+```
+
+Stop:
+
+```bash
+docker stop buildwise-api
+```
+
+## 14. Docker diagnostics
+
+Inspect image metadata:
+
+```bash
+docker image inspect buildwise-ai:local
+docker history buildwise-ai:local
+```
+
+Inspect a running container:
+
+```bash
+docker inspect buildwise-api
+docker stats buildwise-api
+docker top buildwise-api
+```
+
+Show Compose configuration after environment interpolation:
+
+```bash
+docker compose config
+```
+
+Rebuild without cache:
+
+```bash
+docker compose build --no-cache api
+```
+
+Pull the latest PostgreSQL base image:
+
+```bash
+docker compose pull postgres
+```
+
+## 15. Security and dependency checks
+
+Export production requirements and audit them:
+
+```bash
+uv export --frozen --no-dev \
+  --format requirements-txt \
+  --output-file /tmp/buildwise-requirements-audit.txt
+uvx pip-audit --requirement /tmp/buildwise-requirements-audit.txt
+```
+
+Build and scan the local image with Trivy when installed:
+
+```bash
+docker build --tag buildwise-ai:security .
+trivy image --severity HIGH,CRITICAL --ignore-unfixed buildwise-ai:security
+```
+
+Scan the repository with Gitleaks when installed:
+
+```bash
+gitleaks detect --source . --redact
+```
+
+The automated equivalents live in:
+
+- `.github/workflows/ci.yml`
+- `.github/workflows/security.yml`
+
+## 16. Useful cleanup commands
+
+Remove Python caches and test outputs:
+
+```bash
+find src tests -type d -name __pycache__ -prune -exec rm -rf {} +
+rm -rf .pytest_cache .mypy_cache .ruff_cache htmlcov .coverage
+```
+
+These paths contain generated local data. Review them before removal:
+
+```text
+data/reports
+data/buildwise.db
+```
+
+Stop Compose services without deleting data:
+
+```bash
+docker compose down
+```
+
+Remove the isolated API data volume created in section 13:
+
+```bash
+docker volume rm buildwise-api-data
+```
+
+Remove the PostgreSQL Compose volume only when the data is no longer needed:
+
+```bash
+docker compose down --volumes
+```
+
+## 17. Common issues
+
+### Frontend cannot reach the API
+
+- Run the backend on port `8080`, or set
+  `NEXT_PUBLIC_BUILDWISE_API_URL` to the actual API URL.
+- Confirm `curl http://localhost:8080/health` succeeds.
+- Restart the frontend after changing `.env.local`.
+
+### Readiness reports provider configuration as false
+
+- Set `OPENAI_API_KEY` when active models use the `openai/` prefix.
+- Restart the backend after editing `.env`.
+
+### PostgreSQL connection fails
+
+```bash
+docker compose ps
+docker compose logs --tail=100 postgres
+docker compose exec postgres pg_isready -U buildwise -d buildwise
+```
+
+For a backend running outside Docker, the database host is `localhost`. Inside
+Compose, it is `postgres`.
+
+### Serper-backed tools are unavailable
+
+- Add `SERPER_API_KEY` to `.env`.
+- Restart the backend.
+- The workflow can continue without Serper when the requesting Agent permits
+  continuation with a limitation.
+
+### CrewAI telemetry attempts network access during tests
+
+Use:
+
+```bash
+CREWAI_TRACING_ENABLED=false \
+CREWAI_DISABLE_TELEMETRY=true \
+OTEL_SDK_DISABLED=true \
+uv run pytest -q
+```
+
+### API returns HTTP 429
+
+Review:
+
+```env
+API_RATE_LIMIT_REQUESTS=30
+API_RATE_LIMIT_WINDOW_SECONDS=60
+MAX_ACTIVE_CONSULTATIONS=10
+```
+
+For multiple workers or replicas, replace the process-local limiter with a
+shared implementation rather than only increasing these values.

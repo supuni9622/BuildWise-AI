@@ -154,6 +154,12 @@ services:
 
       MAX_RETRIES_PER_OPERATION: ${MAX_RETRIES_PER_OPERATION:-2}
 
+      API_RATE_LIMIT_REQUESTS: ${API_RATE_LIMIT_REQUESTS:-30}
+
+      API_RATE_LIMIT_WINDOW_SECONDS: ${API_RATE_LIMIT_WINDOW_SECONDS:-60}
+
+      MAX_ACTIVE_CONSULTATIONS: ${MAX_ACTIVE_CONSULTATIONS:-10}
+
       # =======================================================================
       # Logging and observability
       # =======================================================================
