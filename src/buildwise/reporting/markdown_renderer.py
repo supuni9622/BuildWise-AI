@@ -18,15 +18,19 @@ def render_blueprint_markdown(blueprint: ProductBlueprint) -> str:
             "---",
             "",
             f"Blueprint version: {blueprint.version}",
-            (
-                "Usage: "
-                f"{blueprint.usage_summary.total_tokens:,} tokens, "
-                f"{blueprint.usage_summary.total_agents} agent executions, "
-                f"estimated cost ${blueprint.usage_summary.estimated_cost:.2f}."
-            ),
+            _usage_line(blueprint),
         ]
     )
     return "\n\n".join(part for part in parts if part != "").strip() + "\n"
+
+
+def _usage_line(blueprint: ProductBlueprint) -> str:
+    cost = blueprint.usage_summary.estimated_cost
+    cost_text = "estimated cost unavailable" if cost is None else f"estimated cost ${cost:.2f}"
+    return (
+        f"Usage: {blueprint.usage_summary.total_tokens:,} tokens, "
+        f"{blueprint.usage_summary.total_agents} agent executions, {cost_text}."
+    )
 
 
 def write_blueprint_markdown(

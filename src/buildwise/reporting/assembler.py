@@ -252,7 +252,7 @@ def assemble_blueprint(
 
     usage = BlueprintUsageSummary(
         total_agents=usage_summary.agent_execution_count,
-        total_llm_calls=len(usage_summary.records),
+        total_llm_calls=usage_summary.request_count,
         prompt_tokens=usage_summary.input_tokens,
         completion_tokens=usage_summary.output_tokens,
         total_tokens=usage_summary.total_tokens,
@@ -273,9 +273,7 @@ def assemble_blueprint(
         usage_summary=usage,
         generated_markdown="",
     )
-    return blueprint.model_copy(
-        update={"generated_markdown": render_blueprint_markdown(blueprint)}
-    )
+    return blueprint.model_copy(update={"generated_markdown": render_blueprint_markdown(blueprint)})
 
 
 class BlueprintAssembler:
@@ -334,9 +332,7 @@ def _names(items: Iterable[object]) -> str:
 
 
 def _named_items(items: Iterable[object], name: str, description: str) -> str:
-    return "\n".join(
-        f"### {getattr(item, name)}\n\n{getattr(item, description)}" for item in items
-    )
+    return "\n".join(f"### {getattr(item, name)}\n\n{getattr(item, description)}" for item in items)
 
 
 def _feature_markdown(features: Iterable[ProductFeature]) -> str:
@@ -394,7 +390,10 @@ def _cost_markdown(
         *review.estimated_review_costs,
     ]
     lines = [_format_cost(item) for item in estimates]
-    lines.append(f"- Blueprint-generation AI usage: ${usage.estimated_cost_usd:,.2f}")
+    if usage.estimated_cost_usd is None:
+        lines.append("- Blueprint-generation AI usage: cost unavailable")
+    else:
+        lines.append(f"- Blueprint-generation AI usage: ${usage.estimated_cost_usd:,.2f}")
     return "\n".join(lines)
 
 

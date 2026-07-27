@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from time import perf_counter
 from typing import Any, Protocol, cast
 
 import structlog
@@ -13,6 +14,7 @@ from crewai.flow.persistence.base import FlowPersistence
 from pydantic import BaseModel, PrivateAttr
 
 from buildwise.agents.factory import AgentFactory
+from buildwise.application.usage_aggregator import UsageAggregator
 from buildwise.config.settings import Settings, get_settings
 from buildwise.crews.discovery import (
     bind_discovery_session,
@@ -43,7 +45,7 @@ from buildwise.domain.review import LeadReview, RevisionRequest
 from buildwise.domain.session import SessionError
 from buildwise.domain.specialist_planning import SpecialistExecutionPlan
 from buildwise.domain.technical_planning import TechnicalPlanningResult
-from buildwise.domain.usage import UsageRecord, UsageSummary
+from buildwise.domain.usage import UsageSummary
 from buildwise.flows.revisions import (
     PRODUCT_REVISION_TARGETS,
     TECHNICAL_REVISION_TARGETS,
@@ -114,6 +116,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
     _settings: Settings = PrivateAttr()
     _agent_factory: AgentFactory = PrivateAttr()
     _planner: SpecialistPlanner = PrivateAttr()
+    _usage_aggregator: UsageAggregator = PrivateAttr()
     _blueprint_builder: BlueprintBuilder = PrivateAttr()
     _blueprint_report_storage: BlueprintReportStorage = PrivateAttr()
     _discovery_crew_factory: CrewFactory = PrivateAttr()
@@ -145,6 +148,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
         self._settings = resolved_settings
         self._agent_factory = agent_factory or AgentFactory(settings=resolved_settings)
         self._planner = planner or SpecialistPlanner()
+        self._usage_aggregator = UsageAggregator()
         self._blueprint_builder = blueprint_builder or BlueprintAssembler()
         self._blueprint_report_storage = (
             blueprint_report_storage or create_blueprint_report_storage(resolved_settings)
@@ -595,25 +599,25 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
                 )
 
     def _kickoff(self, crew: Crew, *, stage: str) -> CrewOutput:
+        started_at = perf_counter()
         output = crew.kickoff()
+        duration_ms = round((perf_counter() - started_at) * 1000)
         if not isinstance(output, CrewOutput):
             raise TypeError("BuildWise Crews must use non-streaming CrewOutput.")
-        metrics = output.token_usage
-        record = UsageRecord(
+        self._usage_aggregator.append(
+            summary=self.state.usage,
+            metrics=output.token_usage,
             task_name=stage,
-            input_tokens=metrics.prompt_tokens,
-            output_tokens=metrics.completion_tokens,
-            total_tokens=metrics.total_tokens,
-            agent_execution_count=metrics.successful_requests,
+            execution_duration_ms=duration_ms,
         )
         usage = self.state.usage
-        usage.records.append(record)
-        usage.input_tokens += record.input_tokens
-        usage.output_tokens += record.output_tokens
-        usage.total_tokens += record.total_tokens
-        usage.agent_execution_count += record.agent_execution_count
         if usage.total_tokens > self.state.limits.maximum_session_tokens:
             raise RuntimeError("The maximum session token budget was exceeded.")
+        if (
+            usage.estimated_cost_usd is not None
+            and usage.estimated_cost_usd > self.state.limits.maximum_estimated_cost_usd
+        ):
+            raise RuntimeError("The maximum estimated session cost was exceeded.")
         return output
 
     def _transition(self, stage: SessionStage, status: SessionStatus) -> None:

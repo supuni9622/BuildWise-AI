@@ -85,8 +85,8 @@ class UsageSummary(BaseModel):
 
     total_tokens: int = 0
 
-    estimated_cost: float = Field(
-        default=0,
+    estimated_cost: float | None = Field(
+        default=None,
         ge=0,
     )
 

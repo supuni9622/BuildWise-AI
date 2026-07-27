@@ -41,7 +41,7 @@ Actor → Frontend → FastAPI validation → BuildWise CrewAI Flow
 | Product Planning Crew | ✅ Built | `crews/product_planning.py`, incl. `assemble_product_planning_result` → `ProductPlanningResult` |
 | Deterministic Specialist Planner | ✅ Built | `src/buildwise/planning/` implements the pure-Python planner; `BuildWiseConsultingFlow.plan_specialists()` now calls it, stores the `SpecialistExecutionPlan`, registers selected executions, and passes that exact plan to the Technical Planning Crew |
 | Technical Planning Crew | ✅ Built | `crews/technical_planning.py`, incl. `assemble_technical_planning_result` → `TechnicalPlanningResult` |
-| Cost Aggregator | 🟡 Partial | The Flow converts each Crew's `UsageMetrics` into a `UsageRecord`, accumulates prompt/completion/total tokens and agent executions in `UsageSummary`, and enforces `maximum_session_tokens`. Provider/model attribution, estimated cost, tool calls, retries, and execution duration are not yet populated |
+| Cost Aggregator | ✅ Built | `application/usage_aggregator.py` converts each Crew's provider-reported `UsageMetrics` into a `UsageRecord` and updates `UsageSummary` with prompt/completion/total tokens, successful request count, and measured execution duration. Explicit provider/model/cost metadata is retained when supplied; otherwise estimated cost remains `null` rather than implying zero cost. The Flow enforces token and known-cost limits without maintaining a pricing catalog |
 | Lead Review Crew | ✅ Built | `crews/lead_review.py` + `tasks/lead_review.py` |
 | approved → blueprint | ✅ Built | The live review router handles `APPROVED` and `APPROVED_WITH_LIMITATIONS`, verifies `approved_for_blueprint`, and invokes `BlueprintAssembler` by default while retaining the injectable `BlueprintBuilder` boundary |
 | revisions → rerun affected planning Crew | ✅ Built | `flows/revisions.py` deterministically maps Product Definition, Requirements, and Market & GTM to the Product Planning Crew, and Solution, AI, Security, and QA revisions to the Technical Planning Crew. Technical revisions rerun only the target plus selected downstream dependants (Solution → selected AI/Security/QA; AI → selected Security/QA; Security → selected QA; QA only). The Flow retains revision history and enforces `state.limits.maximum_specialist_revisions`; no revision-planning Agent is used |
@@ -163,10 +163,13 @@ environments can use the filesystem backend at
 replacement, and multi-version update workflows remain intentionally out of
 scope.
 
-### 6. Complete usage and runtime-budget accounting
-Extend the new Flow-owned token aggregator with provider/model attribution,
-estimated cost, tool calls, retries, duration, and enforcement for every
-remaining `FlowRuntimeLimits` field.
+### 6. 🟡 Partial — Complete runtime-budget accounting
+The lightweight usage aggregator is complete: each successful Crew execution
+appends a record and updates token, request, duration, and reliably supplied
+cost totals. Provider/model attribution remains optional because CrewAI's
+aggregate `UsageMetrics` currently exposes token and successful-request counts
+but not model identity or cost. Tool-call and retry instrumentation, plus
+enforcement of the remaining `FlowRuntimeLimits`, are still required.
 
 ### 7. ✅ Done — Consultation API endpoints — `src/buildwise/api/v1/`
 Implemented start, clarification submission, status lookup, and result lookup.
@@ -212,8 +215,11 @@ are documented in the root `README.md`.
   token/dollar estimation): it only reads
   `FlowRuntimeLimits.maximum_agent_executions` and
   `.maximum_estimated_cost_usd`. The Flow now enforces
-  `.maximum_session_tokens` from aggregated Crew usage; `.maximum_tool_calls`
-  and `.maximum_execution_seconds` remain unenforced.
+  `.maximum_session_tokens` from aggregated Crew usage and
+  `.maximum_estimated_cost_usd` when every recorded Crew supplies reliable
+  cost metadata. `.maximum_tool_calls` and `.maximum_execution_seconds`
+  remain unenforced, although Crew execution duration is now measured and
+  retained.
 - `reporting/` now contains the deterministic assembler and Markdown renderer;
   `validation/` contains the final cross-stage validator described in step 4.
 
@@ -338,7 +344,7 @@ further alignment work.
 | Contract element | Status | Notes |
 |---|---|---|
 | Flow-first orchestration (Flows own routing/state/pause-resume/specialist selection) | ✅ Built | `BuildWiseConsultingFlow` owns routing, aggregate state, clarification pause/resume, planner calls, Crew execution, revisions, usage capture, completion, and deterministic failure routes |
-| Application Service Layer (`full_architecture_flow.md` §3: Session Service, Flow Execution Service, Human Feedback Service, Blueprint Service, Usage and Cost Service, Validation Service, Guardrail Service, Tool Execution Service) | 🟡 Partial | `api/v1/consultation_service.py::ConsultationService` provides the session/Flow/human-feedback boundary, while `validation/output_validator.py` and `tasks/guardrails.py` provide the validation and guardrail logic. The broader package structure and separate Blueprint, Usage/Cost, and Tool Execution services remain missing |
+| Application Service Layer (`full_architecture_flow.md` §3: Session Service, Flow Execution Service, Human Feedback Service, Blueprint Service, Usage and Cost Service, Validation Service, Guardrail Service, Tool Execution Service) | 🟡 Partial | `api/v1/consultation_service.py::ConsultationService` provides the session/Flow/human-feedback boundary, `application/usage_aggregator.py` provides lightweight usage/cost aggregation, and `validation/output_validator.py` plus `tasks/guardrails.py` provide validation and guardrail logic. Separate Blueprint and Tool Execution services remain missing |
 | JSON-first Crew standard (`crewai_runtime_architecture.md` §22, §25: `crews/<name>/crew.jsonc` + `agents/<name>.jsonc`, loaded by a shared Python loader) | 🔴 Missing / diverged | The actual implementation is 100% Python: `crews/*.py` factory functions (`create_discovery_crew`, `create_product_planning_crew`, etc.), `tasks/*.py`, and `agents/*.py` contract modules (`agents/base.py::AgentContract`, `agents/registry.py`, `agents/factory.py`). No `.jsonc` file exists anywhere in `src/`. This is a foundational, repo-wide structural choice that contradicts the contract's canonical folder tree — needs an explicit decision to update the contract or migrate the code |
 | Final folder structure (`crewai_runtime_architecture.md` §22) | 🟡 Diverged | Beyond the JSON-first Crew point above: `infrastructure/` exists as a directory but is completely empty (no `__init__.py`, no `llm.py`/`clock.py`); `knowledge/` is empty (no `README.md`, no `product/`/`architecture/`/etc. subdirs); `observability/` has `context.py` + `middleware.py`, not the target's `events.py`/`tracing.py`/`usage.py`; `tools/` has no `policies.py` or `research/`; `flows/` has no `persistence.py` or `guardrails.py` (guardrails currently live in `tasks/guardrails.py` instead); domain module names differ from the target list (`market_and_gtm.py` vs. target `market.py`, `qa.py` vs. target `qa_evaluation.py`) and the domain package has grown several modules the contract's tree doesn't mention (`product_planning.py`, `technical_planning.py`, `specialist_planning.py`, `agent.py`, `api.py`) — a natural result of the Crew-refactor work happening after this contract was written |
 | Crews are focused single-outcome units | ✅ Built | The four real Crews (`discovery`, `product_planning`, `technical_planning`, `lead_review`) each match this principle in spirit even though they aren't JSON-defined |
@@ -393,7 +399,7 @@ Same legend: ✅ Built · 🟡 Partial · 🔴 Missing.
 | Claude/Anthropic as documented alternate/evaluation config (§16, .env.example's `CLAUDE_*_MODEL`, `EVALUATION_MODEL`, `STRONG_EVALUATION_MODEL`) | 🔴 Missing | None of these fields exist on the `Settings` class (`config/settings.py`); since `model_config` sets `extra="ignore"`, setting them in `.env` is silently a no-op. No code path reads or constructs an Anthropic `LLM` anywhere |
 | Model fallback policy (`.env.example`'s `FALLBACK_*_MODEL`, `MODEL_FALLBACK_*`) | 🔴 Missing | Same gap as above — documented in `.env.example` only, absent from `Settings`, and `factory.py::resolve_model_name` has no retry-with-fallback logic; a misconfigured or failing model raises `AgentProviderConfigurationError` with no fallback attempt |
 | Multi-provider dependency readiness (doc's §14 "should remain provider agnostic") | ✅ Built | `pyproject.toml`: `crewai[openai,anthropic,litellm,tools]==1.15.5` — both OpenAI and Anthropic extras plus `litellm` are installed, so switching any tier to `anthropic/...` today is a config-only change, not a code change |
-| Per-tier cost tracking (doc's entire §6-§9 cost comparison implies costs get measured) | 🟡 Partial | The Flow now constructs one `UsageRecord` per Crew and aggregates token counts and successful requests. It does not yet populate model/provider or estimated-cost fields, so tier-specific cost reporting remains incomplete |
+| Per-tier cost tracking (doc's entire §6-§9 cost comparison implies costs get measured) | 🟡 Partial | The Flow constructs one `UsageRecord` per Crew and aggregates tokens, successful requests, and duration. The aggregator retains provider, model, and estimated cost when reliable metadata is supplied, but CrewAI's aggregate `UsageMetrics` does not currently expose those fields, so ordinary runs keep cost `null` and tier-specific reporting remains incomplete |
 
 ## Key misalignments to resolve
 
