@@ -22,7 +22,6 @@ from buildwise.domain.enums import (
     SourceReferenceType,
 )
 
-
 # =============================================================================
 # Shared constrained scalar types
 # =============================================================================
@@ -145,6 +144,40 @@ class BuildWiseModel(BaseModel):
         use_enum_values=False,
     )
 
+    def apply_updates(self, **updates: object) -> None:
+        """Apply multiple field updates to this model atomically.
+
+        ``validate_assignment=True`` re-validates the entire model on every
+        single attribute write. A method that must change several
+        interdependent fields together (for example a status field and the
+        timestamp field its own validator requires) cannot set them one at a
+        time: the first assignment would validate an intermediate state that
+        is only self-consistent once every field in the group has its new
+        value.
+
+        This writes every update directly into the instance without
+        triggering validation, then performs one real assignment to trigger
+        exactly one validation pass against the fully-updated, self-consistent
+        state.
+
+        Do not use this for list/dict fields that declare their own
+        ``field_validator`` (for example collections requiring uniqueness):
+        bypassing assignment skips that field's own validator, and the
+        triggered pass only re-runs model-level validators plus the
+        field-level validator of whichever field happens to trigger it.
+        Mutate those fields in place (``.append(...)``) as before, outside
+        this method.
+        """
+
+        if not updates:
+            return
+
+        for name, value in updates.items():
+            object.__setattr__(self, name, value)
+
+        trigger_name = next(iter(updates))
+        setattr(self, trigger_name, getattr(self, trigger_name))
+
 
 class TimestampedModel(BuildWiseModel):
     """Base model for domain records that require lifecycle timestamps."""
@@ -241,9 +274,7 @@ class CostRange(BuildWiseModel):
         }
 
         if len(currencies) != 1:
-            raise ValueError(
-                "minimum, expected, and maximum must use the same currency."
-            )
+            raise ValueError("minimum, expected, and maximum must use the same currency.")
 
         if self.minimum.amount > self.expected.amount:
             raise ValueError("minimum amount cannot exceed expected amount.")
@@ -299,10 +330,7 @@ class TokenCounts(BuildWiseModel):
             return self
 
         if self.total_tokens < calculated_total:
-            raise ValueError(
-                "total_tokens cannot be lower than input_tokens plus "
-                "output_tokens."
-            )
+            raise ValueError("total_tokens cannot be lower than input_tokens plus output_tokens.")
 
         return self
 

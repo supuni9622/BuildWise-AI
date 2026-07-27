@@ -318,12 +318,14 @@ class SpecialistExecutionState(BuildWiseModel):
         if normalized_started_at is None:
             raise ValueError("occurred_at cannot be null.")
 
-        self.status = "running"
-        self.started_at = normalized_started_at
-        self.completed_at = None
-        self.error = None
-        self.artifact_id = None
-        self.attempt_count += 1
+        self.apply_updates(
+            status="running",
+            started_at=normalized_started_at,
+            completed_at=None,
+            error=None,
+            artifact_id=None,
+            attempt_count=self.attempt_count + 1,
+        )
 
     def mark_completed(
         self,
@@ -345,10 +347,12 @@ class SpecialistExecutionState(BuildWiseModel):
         if normalized_completed_at is None:
             raise ValueError("occurred_at cannot be null.")
 
-        self.status = "completed"
-        self.completed_at = normalized_completed_at
-        self.artifact_id = artifact_id
-        self.error = None
+        self.apply_updates(
+            status="completed",
+            completed_at=normalized_completed_at,
+            artifact_id=artifact_id,
+            error=None,
+        )
 
     def mark_failed(
         self,
@@ -370,10 +374,12 @@ class SpecialistExecutionState(BuildWiseModel):
         if normalized_completed_at is None:
             raise ValueError("occurred_at cannot be null.")
 
-        self.status = "failed"
-        self.completed_at = normalized_completed_at
-        self.error = error
-        self.artifact_id = None
+        self.apply_updates(
+            status="failed",
+            completed_at=normalized_completed_at,
+            error=error,
+            artifact_id=None,
+        )
 
     def prepare_revision(self) -> None:
         """Prepare a completed or failed specialist for targeted revision."""
@@ -384,12 +390,14 @@ class SpecialistExecutionState(BuildWiseModel):
         }:
             raise ValueError("Only completed or failed specialists can be revised.")
 
-        self.status = "pending"
-        self.started_at = None
-        self.completed_at = None
-        self.artifact_id = None
-        self.error = None
-        self.revision_count += 1
+        self.apply_updates(
+            status="pending",
+            started_at=None,
+            completed_at=None,
+            artifact_id=None,
+            error=None,
+            revision_count=self.revision_count + 1,
+        )
 
 
 class FlowRuntimeLimits(BuildWiseModel):
@@ -805,14 +813,13 @@ class BuildWiseFlowState(BuildWiseModel):
         if normalized_started_at is None:
             raise ValueError("occurred_at cannot be null.")
 
-        self.started_at = normalized_started_at
-
         self.transition_to(
             stage=SessionStage.INTAKE,
             status=SessionStatus.PROCESSING,
             reason="flow_started",
             description="The BuildWise consulting Flow started.",
             occurred_at=normalized_started_at,
+            started_at=normalized_started_at,
         )
 
     def transition_to(
@@ -823,8 +830,15 @@ class BuildWiseFlowState(BuildWiseModel):
         reason: FlowTransitionReason,
         description: str | None = None,
         occurred_at: datetime | None = None,
+        **extra_updates: object,
     ) -> None:
-        """Transition the Flow to a new stage and status."""
+        """Transition the Flow to a new stage and status.
+
+        ``extra_updates`` lets a caller change other fields (for example
+        ``completed_at`` or ``blueprint_artifact_id``) atomically together
+        with the stage/status transition, so the model is never validated in
+        an intermediate state where only part of the change is visible.
+        """
 
         if self.is_terminal:
             raise ValueError("A terminal Flow cannot transition to another stage.")
@@ -848,12 +862,17 @@ class BuildWiseFlowState(BuildWiseModel):
             occurred_at=normalized_transition_time,
         )
 
-        if stage != self.stage:
-            self.last_completed_stage = self.stage
+        updates: dict[str, object] = {
+            "stage": stage,
+            "status": status,
+            "updated_at": normalized_transition_time,
+            **extra_updates,
+        }
 
-        self.stage = stage
-        self.status = status
-        self.updated_at = normalized_transition_time
+        if stage != self.stage:
+            updates["last_completed_stage"] = self.stage
+
+        self.apply_updates(**updates)
         self.transitions.append(transition)
 
     def request_clarification(
@@ -870,15 +889,14 @@ class BuildWiseFlowState(BuildWiseModel):
         if question_set.round_number > self.limits.maximum_clarification_rounds:
             raise ValueError("The maximum number of clarification rounds was exceeded.")
 
-        self.clarification_round = question_set.round_number
-        self.clarification_question_set = question_set
-
         self.transition_to(
             stage=SessionStage.CLARIFICATION,
             status=SessionStatus.AWAITING_USER_INPUT,
             reason="clarification_required",
             description=question_set.summary,
             occurred_at=occurred_at,
+            clarification_round=question_set.round_number,
+            clarification_question_set=question_set,
         )
 
     def receive_clarification_answers(
@@ -1190,11 +1208,6 @@ class BuildWiseFlowState(BuildWiseModel):
         if completed_with_limitations and not self.warnings:
             raise ValueError("A Flow cannot complete with limitations without warnings.")
 
-        self.review_artifact_id = review_artifact_id
-        self.blueprint_artifact_id = blueprint_artifact_id
-        self.completed_at = normalized_completion_time
-        self.failed_at = None
-
         self.transition_to(
             stage=SessionStage.COMPLETED,
             status=(
@@ -1205,6 +1218,10 @@ class BuildWiseFlowState(BuildWiseModel):
             reason="flow_completed",
             description="The BuildWise consulting Flow completed.",
             occurred_at=normalized_completion_time,
+            review_artifact_id=review_artifact_id,
+            blueprint_artifact_id=blueprint_artifact_id,
+            completed_at=normalized_completion_time,
+            failed_at=None,
         )
 
     def mark_failed(
@@ -1227,15 +1244,14 @@ class BuildWiseFlowState(BuildWiseModel):
         if not any(existing.id == error.id for existing in self.errors):
             self.errors.append(error)
 
-        self.failed_at = normalized_failure_time
-        self.completed_at = None
-
         self.transition_to(
             stage=SessionStage.FAILED,
             status=SessionStatus.FAILED,
             reason="flow_failed",
             description=error.message,
             occurred_at=normalized_failure_time,
+            failed_at=normalized_failure_time,
+            completed_at=None,
         )
 
     def _require_specialist_execution(

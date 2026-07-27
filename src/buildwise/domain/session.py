@@ -148,19 +148,13 @@ class SessionError(BuildWiseModel):
             raise ValueError("resolved_at cannot be earlier than occurred_at.")
 
         if self.resolved_at is None and self.resolution is not None:
-            raise ValueError(
-                "resolution cannot be provided when resolved_at is not set."
-            )
+            raise ValueError("resolution cannot be provided when resolved_at is not set.")
 
         if self.resolved_at is not None and self.resolution is None:
-            raise ValueError(
-                "resolution is required when resolved_at is provided."
-            )
+            raise ValueError("resolution is required when resolved_at is provided.")
 
         if self.retry_count > 0 and not self.retryable:
-            raise ValueError(
-                "retry_count cannot be greater than zero when retryable is false."
-            )
+            raise ValueError("retry_count cannot be greater than zero when retryable is false.")
 
         return self
 
@@ -238,9 +232,7 @@ class ConsultingSession(TimestampedModel):
         }
 
         if self.last_activity_at < self.created_at:
-            raise ValueError(
-                "last_activity_at cannot be earlier than created_at."
-            )
+            raise ValueError("last_activity_at cannot be earlier than created_at.")
 
         if self.completed_at is not None and self.completed_at < self.created_at:
             raise ValueError("completed_at cannot be earlier than created_at.")
@@ -250,76 +242,46 @@ class ConsultingSession(TimestampedModel):
 
         if self.status in completed_statuses:
             if self.stage is not SessionStage.COMPLETED:
-                raise ValueError(
-                    "A completed session must use the completed session stage."
-                )
+                raise ValueError("A completed session must use the completed session stage.")
 
             if self.completed_at is None:
-                raise ValueError(
-                    "completed_at is required for a completed session."
-                )
+                raise ValueError("completed_at is required for a completed session.")
 
             if self.failed_at is not None:
-                raise ValueError(
-                    "A completed session cannot contain failed_at."
-                )
+                raise ValueError("A completed session cannot contain failed_at.")
 
         if self.status is SessionStatus.FAILED:
             if self.stage is not SessionStage.FAILED:
-                raise ValueError(
-                    "A failed session must use the failed session stage."
-                )
+                raise ValueError("A failed session must use the failed session stage.")
 
             if self.failed_at is None:
                 raise ValueError("failed_at is required for a failed session.")
 
             if self.completed_at is not None:
-                raise ValueError(
-                    "A failed session cannot contain completed_at."
-                )
+                raise ValueError("A failed session cannot contain completed_at.")
 
         if self.status not in terminal_statuses:
             if self.completed_at is not None:
-                raise ValueError(
-                    "completed_at can only be set for a completed session."
-                )
+                raise ValueError("completed_at can only be set for a completed session.")
 
             if self.failed_at is not None:
-                raise ValueError(
-                    "failed_at can only be set for a failed session."
-                )
+                raise ValueError("failed_at can only be set for a failed session.")
 
         if (
             self.status is SessionStatus.AWAITING_USER_INPUT
             and self.stage is not SessionStage.CLARIFICATION
         ):
-            raise ValueError(
-                "A session awaiting user input must be in the clarification stage."
-            )
+            raise ValueError("A session awaiting user input must be in the clarification stage.")
 
-        if (
-            self.status is SessionStatus.REVIEWING
-            and self.stage is not SessionStage.LEAD_REVIEW
-        ):
-            raise ValueError(
-                "A reviewing session must be in the lead-review stage."
-            )
+        if self.status is SessionStatus.REVIEWING and self.stage is not SessionStage.LEAD_REVIEW:
+            raise ValueError("A reviewing session must be in the lead-review stage.")
 
-        if (
-            self.status is SessionStatus.RESUMING
-            and self.stage is not SessionStage.CLARIFICATION
-        ):
-            raise ValueError(
-                "A resuming session must resume from the clarification stage."
-            )
+        if self.status is SessionStatus.RESUMING and self.stage is not SessionStage.CLARIFICATION:
+            raise ValueError("A resuming session must resume from the clarification stage.")
 
-        if (
-            self.status is SessionStatus.COMPLETED_WITH_LIMITATIONS
-            and not self.warnings
-        ):
+        if self.status is SessionStatus.COMPLETED_WITH_LIMITATIONS and not self.warnings:
             raise ValueError(
-                "A session completed with limitations must contain at least "
-                "one warning."
+                "A session completed with limitations must contain at least one warning."
             )
 
         return self
@@ -351,13 +313,13 @@ class ConsultingSession(TimestampedModel):
         normalized_time = activity_time.astimezone(UTC)
 
         if normalized_time < self.created_at:
-            raise ValueError(
-                "Activity timestamp cannot be earlier than session creation."
-            )
+            raise ValueError("Activity timestamp cannot be earlier than session creation.")
 
-        self.last_activity_at = normalized_time
-        self.updated_at = normalized_time
-        self.state_revision += 1
+        self.apply_updates(
+            last_activity_at=normalized_time,
+            updated_at=normalized_time,
+            state_revision=self.state_revision + 1,
+        )
 
     def add_error(self, error: SessionError) -> None:
         """Append an error and record a session-state revision."""
@@ -388,20 +350,22 @@ class ConsultingSession(TimestampedModel):
         normalized_time = completion_time.astimezone(UTC)
 
         if completed_with_limitations and not self.warnings:
-            raise ValueError(
-                "Cannot complete with limitations without at least one warning."
-            )
+            raise ValueError("Cannot complete with limitations without at least one warning.")
 
-        self.status = (
-            SessionStatus.COMPLETED_WITH_LIMITATIONS
-            if completed_with_limitations
-            else SessionStatus.COMPLETED
+        self.apply_updates(
+            status=(
+                SessionStatus.COMPLETED_WITH_LIMITATIONS
+                if completed_with_limitations
+                else SessionStatus.COMPLETED
+            ),
+            stage=SessionStage.COMPLETED,
+            completed_at=normalized_time,
+            failed_at=None,
+            completion_summary=summary,
+            last_activity_at=normalized_time,
+            updated_at=normalized_time,
+            state_revision=self.state_revision + 1,
         )
-        self.stage = SessionStage.COMPLETED
-        self.completed_at = normalized_time
-        self.failed_at = None
-        self.completion_summary = summary
-        self.record_activity(occurred_at=normalized_time)
 
     def mark_failed(
         self,
@@ -419,8 +383,13 @@ class ConsultingSession(TimestampedModel):
         normalized_time = failure_time.astimezone(UTC)
 
         self.errors.append(error)
-        self.status = SessionStatus.FAILED
-        self.stage = SessionStage.FAILED
-        self.failed_at = normalized_time
-        self.completed_at = None
-        self.record_activity(occurred_at=normalized_time)
+
+        self.apply_updates(
+            status=SessionStatus.FAILED,
+            stage=SessionStage.FAILED,
+            failed_at=normalized_time,
+            completed_at=None,
+            last_activity_at=normalized_time,
+            updated_at=normalized_time,
+            state_revision=self.state_revision + 1,
+        )
