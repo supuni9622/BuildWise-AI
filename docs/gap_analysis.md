@@ -4,6 +4,9 @@ Walks `BuildWise AI -final flow.drawio.png` node by node against the current
 codebase. Legend: ✅ Built · 🟡 Partial (real logic exists but incomplete) ·
 🔴 Missing (nothing built yet).
 
+Assessment baseline: 2026-07-27, including the Consulting Flow, five-table
+PostgreSQL persistence layer, and consultation clarification/resume API.
+
 ```
 Actor → Frontend → FastAPI validation → BuildWise CrewAI Flow
   → Discovery Crew → DiscoveryResult → Completeness Router
@@ -26,12 +29,12 @@ Actor → Frontend → FastAPI validation → BuildWise CrewAI Flow
 | Diagram node | Status | Notes |
 |---|---|---|
 | Actor / Frontend | N/A | No frontend in this repository; out of scope here |
-| FastAPI validation | 🟡 Partial | App + `/health`, `/ready`, `/api/v1` exist (`api/router.py`). **No consultation endpoints** — no `POST` to submit a product idea, no clarification-answer endpoint, no session/result retrieval |
+| FastAPI validation | ✅ Built | The API validates vague-idea intake and typed clarification answers and exposes `POST /api/v1/consultations`, `POST /api/v1/consultations/{id}/clarifications`, `GET /api/v1/consultations/{id}`, and `GET /api/v1/consultations/{id}/result` |
 | BuildWise CrewAI Flow | ✅ Built | `flows/consulting_flow.py::BuildWiseConsultingFlow` is the native `Flow[BuildWiseFlowState]` orchestrator. It connects intake, Discovery, Product Planning, deterministic specialist planning, Technical Planning, Lead Review, revisions, and the blueprint boundary with `@start`/`@listen`/`@router` methods |
 | Discovery Crew | ✅ Built | `crews/discovery.py` + `tasks/discovery.py` |
 | DiscoveryResult | ✅ Built | `domain/discovery.py` |
 | Completeness Router | ✅ Built | `BuildWiseConsultingFlow.route_discovery()` delegates to `route_after_discovery(state)` and emits live clarification, continuation, or failure routes |
-| Clarification loop (pause/frontend/answers/resume) | 🟡 Partial | The Flow enters `AWAITING_USER_INPUT`, accepts structured `ClarificationAnswer` values, and routes a persisted/reconstructed `RESUMING` state through Discovery to completion. `BuildWiseFlowStore` provides the native persistence adapter; the frontend/API resume endpoint remains missing |
+| Clarification loop (pause/answers/resume) | ✅ Built | The API returns active questions, loads persisted Flow state, validates the active round and question set, checkpoints accepted answers before execution, resumes Discovery, and continues to the next pause or terminal state. The frontend is tracked separately as out of scope for this repository |
 | Early Market Router | ✅ Built | `run_product_planning()` calls `SpecialistPlanner.should_include_early_market_context(...)` before constructing the Product Planning Crew |
 | Product Planning Crew | ✅ Built | `crews/product_planning.py`, incl. `assemble_product_planning_result` → `ProductPlanningResult` |
 | Deterministic Specialist Planner | ✅ Built | `src/buildwise/planning/` implements the pure-Python planner; `BuildWiseConsultingFlow.plan_specialists()` now calls it, stores the `SpecialistExecutionPlan`, registers selected executions, and passes that exact plan to the Technical Planning Crew |
@@ -43,7 +46,7 @@ Actor → Frontend → FastAPI validation → BuildWise CrewAI Flow
 | Output validation | 🟡 Partial | The Flow rejects missing/wrong structured Discovery and Lead Review outputs, aggregate assemblers validate Product/Technical Planning, and state setters enforce session ownership and specialist selection. The dedicated `validation/` package and a unified post-Crew validation service remain missing |
 | Deterministic Blueprint Generator | 🔴 Missing | `reporting/__init__.py` is empty. `ProductBlueprint`/`BlueprintSection` models exist (`domain/blueprint.py`) with no assembler |
 | Final Report / Frontend | 🔴 Missing | Depends on the blueprint generator above |
-| Persistence (implicit, cross-cutting) | ✅ Built | `persistence/models.py` defines the five-table MVP schema; `repositories.py` handles consultation snapshots, versioned artifacts, clarification rounds, revisions, and usage; `flow_store.py::BuildWiseFlowStore` is the native CrewAI adapter. The full Flow persistence integration is tested |
+| Persistence (implicit, cross-cutting) | ✅ Built | `persistence/models.py` defines the five-table MVP schema; `repositories.py` handles consultation snapshots, versioned artifacts, clarification rounds, revisions, and usage; `flow_store.py::BuildWiseFlowStore` is the native CrewAI adapter. The full Flow persistence integration is tested. PostgreSQL is running through Docker Compose and the active local configuration connects on `localhost:5433`; containers use `postgres:5432` internally |
 
 ---
 
@@ -94,6 +97,13 @@ duplicate revision records. `BuildWiseFlowStore` implements CrewAI's native
 state by CrewAI Flow UUID. No user, organization, permission, authentication,
 API-key, or tenant-isolation tables were added.
 
+The runtime database setup is also complete: Docker Compose runs
+`buildwise-postgres` with a named `buildwise-postgres-data` volume. The host
+uses the published port configured by `POSTGRES_PORT` (currently `5433`), while
+the application container receives the Compose-network URL using
+`postgres:5432`. Only one `DATABASE_URL` is used in each runtime context.
+SQLite and a local `data/` directory are not required for the active setup.
+
 ### 4. 🟡 Partial — Output validation — `src/buildwise/validation/`
 The Flow-side check described in every Crew PRD: reject a "successful"
 `CrewOutput` when `.pydantic` is `None`, the wrong type, or fails ownership —
@@ -115,10 +125,13 @@ Extend the new Flow-owned token aggregator with provider/model attribution,
 estimated cost, tool calls, retries, duration, and enforcement for every
 remaining `FlowRuntimeLimits` field.
 
-### 7. Consultation API endpoints — `src/buildwise/api/v1/`
-`POST` to start a consultation (kicks off the Flow), `POST` to submit
-clarification answers (resumes it), `GET` to poll status/result. These call
-into the completed Flow and the persistence layer in step 3.
+### 7. ✅ Done — Consultation API endpoints — `src/buildwise/api/v1/`
+Implemented start, clarification submission, status lookup, and result lookup.
+`ConsultationService` reconstructs typed state through `BuildWiseFlowStore`,
+checks the submitted clarification round, delegates active-question and
+required-answer validation to `BuildWiseFlowState`, checkpoints accepted
+answers before resuming, and runs the Flow until its next pause or terminal
+result. Creating the service initializes the five-table schema.
 
 ---
 
@@ -130,12 +143,13 @@ into the completed Flow and the persistence layer in step 3.
   (`SpecialistExecutionPlan`); `routing.py` held a second, buggy
   implementation of the selection *rules* targeting that same model. It has
   been removed in favor of `src/buildwise/planning/` (see step 1 above).
-- Tests now include 62 planner tests, 11 mocked Consulting Flow tests, and
-  four persistence tests. Flow coverage includes the happy path, intake rejection,
-  typed clarification, serialized-state resume through completion, all four
-  review decisions, malformed revision decisions, revision-limit exhaustion,
-  and session ownership. The full suite contains 77 passing tests with no
-  live LLM calls.
+- Tests now include 62 planner tests, 11 mocked Consulting Flow tests, four
+  persistence tests, and three consultation API/service tests. Coverage
+  includes the happy path, intake rejection, typed clarification, serialized
+  state resume through completion, active-round/question validation, status
+  and result retrieval, all four review decisions, malformed revision
+  decisions, revision-limit exhaustion, and session ownership. The full suite
+  contains 80 passing tests with no live LLM calls.
 - The planner's budget policy is intentionally coarse per the PRD (no exact
   token/dollar estimation): it only reads
   `FlowRuntimeLimits.maximum_agent_executions` and
@@ -160,9 +174,9 @@ Output shape. Same legend: ✅ Built · 🟡 Partial · 🔴 Missing.
 
 | PRD ID | Requirement | Status | Evidence |
 |---|---|---|---|
-| FR1 | Accept vague ideas | 🟡 Partial | `domain/intake.py` models (`ProductIdeaRequest`, `ValidatedProductIdea`) and the Discovery Crew (`crews/discovery.py`) can process one, but there is no live endpoint to submit one — `api/v1/router.py` only exposes the API root |
+| FR1 | Accept vague ideas | ✅ Built | `POST /api/v1/consultations` accepts the intentionally permissive `ProductIdeaRequest` shape and starts the Discovery Flow |
 | FR2 | Generate dynamic questions | ✅ Built | Discovery produces `ClarificationQuestionSet` and the Flow exposes it as the typed pause result |
-| FR3 | Pause and resume sessions | 🟡 Partial | The live Flow pauses in `AWAITING_USER_INPUT`, persists typed state through `BuildWiseFlowStore`, accepts structured answers, and resumes through Discovery to completion. Only the external API/frontend resume endpoint remains missing |
+| FR3 | Pause and resume sessions | ✅ Built | The Flow pauses in `AWAITING_USER_INPUT`; `POST /api/v1/consultations/{id}/clarifications` reloads its durable state, validates the active round/question set, checkpoints answers, and resumes execution to the next pause or terminal state |
 | FR4 | Select specialists dynamically | ✅ Built | The live Flow calls `SpecialistPlanner.create_execution_plan(...)`, stores its plan, and uses it to construct Technical Planning |
 | FR5 | Generate product blueprint | 🔴 Missing | `ProductBlueprint`/`BlueprintSection` models exist (`domain/blueprint.py`); `reporting/__init__.py` is an empty stub — no assembler produces one |
 | FR6 | Support markdown export | 🔴 Missing | `ProductBlueprint.generated_markdown` is a required field in the model, but nothing populates it since no generator exists |
@@ -176,7 +190,7 @@ Output shape. Same legend: ✅ Built · 🟡 Partial · 🔴 Missing.
 | Reliability: partial specialist failures shouldn't fail the whole workflow | 🟡 Partial | The live Flow tracks specialist lifecycle and routes required-specialist failure, but Crew-level exception normalization and optional-specialist degraded continuation are not yet complete |
 | Security — Prompt Injection Protection | 🔴 Missing | No sanitization or prompt-injection defenses found anywhere in `tasks/` or `domain/intake.py`; input is only Pydantic-schema-validated, not adversarially screened |
 | Security — Tool Restrictions | ✅ Built | `tools/registry.py` exposes a small, explicit `ToolKey` whitelist (`web_search`, `web_scraper`, `github_search`) with per-tool env-var gating; agents can only request tools by these keys |
-| Security — Input Validation | 🟡 Partial | Strong Pydantic validation exists on all domain models (`domain/intake.py`, etc.), but there is no live endpoint yet accepting raw external input for that validation to guard |
+| Security — Input Validation | ✅ Built | The live consultation endpoints apply strict Pydantic request validation to vague intake, clarification rounds, and structured answers; semantic prompt-injection and secret detection remain separate missing security controls |
 | Cost — Session budget controls | 🟡 Partial | The Flow enforces session tokens and revision rounds and the planner applies agent/cost selection limits. Tool-call, duration, and actual estimated-cost enforcement remain incomplete |
 
 ## Agents
@@ -200,7 +214,7 @@ Output shape. Same legend: ✅ Built · 🟡 Partial · 🔴 Missing.
 |---|---|---|
 | Flows | ✅ Built | `BuildWiseConsultingFlow` is the live typed orchestrator and is covered by mocked end-to-end tests |
 | Crews | ✅ Built | Four real Crews: `crews/discovery.py`, `crews/product_planning.py`, `crews/technical_planning.py`, `crews/lead_review.py` |
-| Human Feedback | 🟡 Partial | Structured clarification pause/resume and native state persistence are complete without manual JSON parsing. No API/frontend bridge or interactive input provider exists yet |
+| Human Feedback | ✅ Built | Structured clarification pause/resume, native persistence, active-question validation, and the HTTP bridge are complete without manual JSON parsing. A frontend is a separate client concern and is out of scope for this repository |
 | Structured Outputs | ✅ Built | `TaskOutput.pydantic` enforced pervasively via `tasks/guardrails.py::require_pydantic_output` and friends |
 | Tool Usage | ✅ Built | `tools/registry.py` wraps official CrewAI tools (`SerperDevTool`, `ScrapeWebsiteTool`, `GithubSearchTool`) |
 | Parallel Execution | 🔴 Missing | The Flow currently executes its Crews sequentially; no Crew branches run concurrently |
@@ -272,7 +286,7 @@ further alignment work.
 | Contract element | Status | Notes |
 |---|---|---|
 | Flow-first orchestration (Flows own routing/state/pause-resume/specialist selection) | ✅ Built | `BuildWiseConsultingFlow` owns routing, aggregate state, clarification pause/resume, planner calls, Crew execution, revisions, usage capture, completion, and deterministic failure routes |
-| Application Service Layer (`full_architecture_flow.md` §3: Session Service, Flow Execution Service, Human Feedback Service, Blueprint Service, Usage and Cost Service, Validation Service, Guardrail Service, Tool Execution Service) | 🔴 Missing | No `application/` package exists at all (not even empty) — `crewai_runtime_architecture.md` §24.1 talks about an *existing* `application/` package to inspect/migrate, but the current repo has none. Either that section is stale or the package was already removed |
+| Application Service Layer (`full_architecture_flow.md` §3: Session Service, Flow Execution Service, Human Feedback Service, Blueprint Service, Usage and Cost Service, Validation Service, Guardrail Service, Tool Execution Service) | 🟡 Partial | `api/v1/consultation_service.py::ConsultationService` now provides the session/Flow/human-feedback boundary for start, resume, status, and result operations. The broader package structure and separate Blueprint, Usage/Cost, Validation, Guardrail, and Tool Execution services remain missing |
 | JSON-first Crew standard (`crewai_runtime_architecture.md` §22, §25: `crews/<name>/crew.jsonc` + `agents/<name>.jsonc`, loaded by a shared Python loader) | 🔴 Missing / diverged | The actual implementation is 100% Python: `crews/*.py` factory functions (`create_discovery_crew`, `create_product_planning_crew`, etc.), `tasks/*.py`, and `agents/*.py` contract modules (`agents/base.py::AgentContract`, `agents/registry.py`, `agents/factory.py`). No `.jsonc` file exists anywhere in `src/`. This is a foundational, repo-wide structural choice that contradicts the contract's canonical folder tree — needs an explicit decision to update the contract or migrate the code |
 | Final folder structure (`crewai_runtime_architecture.md` §22) | 🟡 Diverged | Beyond the JSON-first Crew point above: `infrastructure/` exists as a directory but is completely empty (no `__init__.py`, no `llm.py`/`clock.py`); `knowledge/` is empty (no `README.md`, no `product/`/`architecture/`/etc. subdirs); `observability/` has `context.py` + `middleware.py`, not the target's `events.py`/`tracing.py`/`usage.py`; `tools/` has no `policies.py` or `research/`; `flows/` has no `persistence.py` or `guardrails.py` (guardrails currently live in `tasks/guardrails.py` instead); domain module names differ from the target list (`market_and_gtm.py` vs. target `market.py`, `qa.py` vs. target `qa_evaluation.py`) and the domain package has grown several modules the contract's tree doesn't mention (`product_planning.py`, `technical_planning.py`, `specialist_planning.py`, `agent.py`, `api.py`) — a natural result of the Crew-refactor work happening after this contract was written |
 | Crews are focused single-outcome units | ✅ Built | The four real Crews (`discovery`, `product_planning`, `technical_planning`, `lead_review`) each match this principle in spirit even though they aren't JSON-defined |
@@ -290,7 +304,7 @@ further alignment work.
 
 | Contract requirement | Status | Notes |
 |---|---|---|
-| Semantic input validation / prompt-injection detection / secret detection as explicit pre-acceptance pipeline stages (`full_architecture_flow.md` §7–9: "Prompt Injection Check", "Secret Detection", 12-item AI-security threat list including indirect injection via web results, hidden instruction attacks, cross-session leakage) | 🔴 Missing | Confirmed no implementation anywhere in `tasks/`, `domain/intake.py`, or `api/`; only Pydantic schema validation exists. This is the same gap as "Key misalignments" item 3, now specified in much more detail by both new documents — including the principle "all user input, external content, and tool output must be treated as untrusted data", which nothing currently enforces |
+| Semantic input validation / prompt-injection detection / secret detection as explicit pre-acceptance pipeline stages (`full_architecture_flow.md` §7–9: "Prompt Injection Check", "Secret Detection", 12-item AI-security threat list including indirect injection via web results, hidden instruction attacks, cross-session leakage) | 🔴 Missing | The consultation API now provides strong structural Pydantic validation, but no semantic prompt-injection or secret-detection stage exists in `tasks/`, `domain/intake.py`, or `api/`. This is the same gap as "Key misalignments" item 3, now specified in much more detail by both new documents — including the principle "all user input, external content, and tool output must be treated as untrusted data", which nothing currently enforces |
 | Tool definitions require purpose, allowed users/operations, input constraints, output schema, timeout, retry policy, rate limit, side-effect classification, sensitive-data policy, logging policy, failure behavior (`crewai_runtime_architecture.md` §10) | 🟡 Partial | `tools/registry.py::ToolRegistry` implements the default-deny key allowlist and per-tool env-var gating (§10.1) cleanly, but none of the other governance fields exist as structured policy — there's no `tools/policies.py`, no timeout/retry/rate-limit config per tool, no tool-output sanitization or untrusted-content handling |
 | Tool output must pass a security/injection guardrail before being used by a specialist (`full_architecture_flow.md` diagram: `TOOL_OUTPUT_GUARDRAIL`) | 🔴 Missing | No such guardrail exists; tool results returned by `ToolRegistry.resolve_many()` flow directly into the agent with no intermediate check |
 | Deterministic + LLM guardrail split (`crewai_runtime_architecture.md` §17) | 🟡 Partial | Deterministic guardrails exist and are used extensively (`tasks/guardrails.py::require_pydantic_output` and friends); no LLM-based subjective guardrails (clarity, coherence, vague-recommendation detection) exist yet, and the doc's specific "one repair attempt then mark partial" pattern isn't implemented — current guardrails retry then fail the task rather than continuing with a partial/degraded result |
@@ -302,8 +316,8 @@ further alignment work.
 | Docker (multi-stage build, non-root user, health check, production ASGI server, `.dockerignore`, pinned deps) | ✅ Built | `Dockerfile` matches the spec closely: multi-stage `python:3.12-slim` build, non-root `buildwise` user, `HEALTHCHECK` hitting `/health`, `uv`-pinned deps. `docker-compose.yml` wires a Postgres service too. Not previously credited anywhere in this document |
 | CI (GitHub Actions: Ruff, mypy, pytest, coverage, startup smoke test) | 🔴 Missing | No `.github/workflows/` directory exists at all — zero automated CI, despite both architecture docs treating it as a required MVP control (`crewai_runtime_architecture.md` §2.8, `full_architecture_flow.md` §16–17) |
 | Docker/security CI workflow (image build, container smoke test, dependency audit, secret scanning, image scanning) | 🔴 Missing | Same as above — the Docker image itself is ready to be built by CI, but nothing builds or scans it automatically |
-| `GET /metrics/summary` endpoint (`full_architecture_flow.md` §6) | 🔴 Missing | Only `/health` and `/ready` exist in `api/router.py`; no metrics-summary endpoint |
-| PostgreSQL vs. SQLite as system of record | 🟡 Doc conflict, impl. reasonable | `crewai_runtime_architecture.md` §4.5/§3 treats PostgreSQL as the only system of record; `full_architecture_flow.md` §15 allows SQLite locally and Postgres when hosted. The portable SQLAlchemy MVP schema now supports both; `Settings.database_url` defaults to SQLite locally while `docker-compose.yml` wires Postgres |
+| `GET /metrics/summary` endpoint (`full_architecture_flow.md` §6) | 🔴 Missing | Operational health/readiness and all four consultation endpoints exist, but no metrics-summary endpoint is registered |
+| PostgreSQL system of record | ✅ Built and configured | The portable SQLAlchemy schema supports SQLite for isolated tests, but the active runtime is PostgreSQL. Docker Compose runs `buildwise-postgres`, persists data in the named `buildwise-postgres-data` volume, exposes the configured host port (`5433` currently), and injects `postgres:5432` into the application container. `.env.example` now presents PostgreSQL as the single runtime setup instead of also declaring a conflicting SQLite URL. `Settings.database_url` retains a SQLite fallback only when no environment configuration is supplied |
 | CrewAI tracing wired to Flow/Crew/agent/task/tool/LLM execution | 🟡 Partial | A real Flow/Crew execution path and stage-level structlog events now exist, but `Settings.crewai_tracing_enabled` is not explicitly passed into the Flow and no trace records are persisted per consulting session |
 
 ---

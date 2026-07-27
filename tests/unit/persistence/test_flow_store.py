@@ -152,9 +152,15 @@ def test_clarification_answers_and_usage_are_upserted(tmp_path: Path) -> None:
     state = _state(consultation_id)
     store.save_state("flow-upsert", "pause", state)
 
+    question_set = state["clarification_question_set"]
+    assert isinstance(question_set, dict)
+    questions = question_set["questions"]
+    assert isinstance(questions, list)
+    question = questions[0]
+    assert isinstance(question, dict)
     state["clarification_answers"] = [
         {
-            "question_id": str(uuid4()),
+            "question_id": question["id"],
             "answer": "Product managers.",
             "answered_at": "2026-07-27T12:00:00+00:00",
         }

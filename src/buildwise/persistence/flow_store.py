@@ -85,9 +85,38 @@ class BuildWiseFlowStore(FlowPersistence):
             record = ConsultationRepository(session).find_by_flow_uuid(flow_uuid)
             if record is None:
                 return None
-            state = dict(record.flow_state_json)
-            state.pop("_flow_uuid", None)
-            return state
+            return self._public_state(record.flow_state_json)
+
+    def load_consultation_state(self, consultation_id: str) -> dict[str, Any] | None:
+        """Load Flow state by the public consultation identifier."""
+
+        with self._session_factory() as session:
+            record = ConsultationRepository(session).get(consultation_id)
+            if record is None:
+                return None
+            return self._public_state(record.flow_state_json)
+
+    def save_consultation_state(
+        self,
+        consultation_id: str,
+        *,
+        method_name: str,
+        state_data: dict[str, Any] | BaseModel,
+    ) -> None:
+        """Checkpoint an API mutation using the consultation's current Flow UUID."""
+
+        with self._session_factory() as session:
+            record = ConsultationRepository(session).get(consultation_id)
+            if record is None:
+                raise LookupError(f"Consultation '{consultation_id}' was not found.")
+            flow_uuid = str(record.flow_state_json.get("_flow_uuid") or consultation_id)
+        self.save_state(flow_uuid, method_name, state_data)
+
+    @staticmethod
+    def _public_state(state_data: dict[str, Any]) -> dict[str, Any]:
+        state = dict(state_data)
+        state.pop("_flow_uuid", None)
+        return state
 
     @staticmethod
     def _state_dict(state_data: dict[str, Any] | BaseModel) -> dict[str, Any]:
@@ -138,11 +167,26 @@ class BuildWiseFlowStore(FlowPersistence):
         if not isinstance(questions, dict) or round_number < 1:
             return
         answers_value = state.get("clarification_answers")
-        answers = (
+        all_answers = (
             [dict(answer) for answer in answers_value if isinstance(answer, dict)]
             if isinstance(answers_value, list)
             else []
         )
+        question_values = questions.get("questions")
+        active_question_ids = (
+            {
+                str(question.get("id"))
+                for question in question_values
+                if isinstance(question, dict) and question.get("id") is not None
+            }
+            if isinstance(question_values, list)
+            else set()
+        )
+        answers = [
+            answer
+            for answer in all_answers
+            if str(answer.get("question_id")) in active_question_ids
+        ]
         ClarificationRoundRepository(session).save(
             consultation_id=consultation_id,
             round_number=round_number,
