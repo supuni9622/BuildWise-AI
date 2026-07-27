@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import Field, field_validator, model_validator
-
-from buildwise.domain.common import BuildWiseModel, MediumText
+from buildwise.domain.common import MediumText
 from buildwise.domain.discovery import CapabilityClassification, DiscoveryResult
 from buildwise.domain.enums import (
+    BudgetDecisionType,
     CapabilityType,
+    DependencyType,
+    ExecutionMode,
     RequirementPriority,
     RiskSeverity,
     SessionStage,
@@ -16,6 +17,13 @@ from buildwise.domain.enums import (
     SpecialistType,
 )
 from buildwise.domain.requirements import RequirementsSpecification
+from buildwise.domain.specialist_planning import (
+    BudgetDecision,
+    SpecialistDependency,
+    SpecialistExecutionGroup,
+    SpecialistExecutionPlan,
+    SpecialistRecommendation,
+)
 from buildwise.flows.state import BuildWiseFlowState
 
 
@@ -37,117 +45,6 @@ class FlowRoute(StrEnum):
     ASSEMBLE_BLUEPRINT = "assemble_blueprint"
     COMPLETE_FLOW = "complete_flow"
     FAIL_FLOW = "fail_flow"
-
-
-class SpecialistRoutingDecision(BuildWiseModel):
-    """Deterministic selection decision for one BuildWise specialist."""
-
-    specialist: SpecialistType
-    selected: bool
-
-    reason: SpecialistSelectionReason | None = None
-    rationale: MediumText
-
-    execution_order: int | None = Field(default=None, ge=1)
-
-    @model_validator(mode="after")
-    def validate_selection_decision(self) -> SpecialistRoutingDecision:
-        """Validate selected and non-selected decision metadata."""
-
-        if self.selected:
-            if self.reason is None:
-                raise ValueError("A selected specialist requires a selection reason.")
-
-            if self.execution_order is None:
-                raise ValueError("A selected specialist requires an execution order.")
-        else:
-            if self.reason is not None:
-                raise ValueError("A non-selected specialist cannot have a selection reason.")
-
-            if self.execution_order is not None:
-                raise ValueError("A non-selected specialist cannot have an execution order.")
-
-        return self
-
-
-class SpecialistRoutingPlan(BuildWiseModel):
-    """Ordered specialist-selection plan produced by deterministic routing."""
-
-    decisions: list[SpecialistRoutingDecision] = Field(min_length=1)
-
-    @field_validator("decisions")
-    @classmethod
-    def validate_decisions(
-        cls,
-        value: list[SpecialistRoutingDecision],
-    ) -> list[SpecialistRoutingDecision]:
-        """Require unique specialists and contiguous selected execution order."""
-
-        specialists = [decision.specialist for decision in value]
-
-        if len(specialists) != len(set(specialists)):
-            raise ValueError("A specialist may appear only once in a routing plan.")
-
-        selected_orders = sorted(
-            decision.execution_order
-            for decision in value
-            if decision.selected and decision.execution_order is not None
-        )
-
-        expected_orders = list(range(1, len(selected_orders) + 1))
-
-        if selected_orders != expected_orders:
-            raise ValueError(
-                "Selected specialist execution orders must be contiguous and start at one."
-            )
-
-        selected_specialists = {decision.specialist for decision in value if decision.selected}
-
-        always_required = {
-            SpecialistType.MARKET_AND_GTM,
-            SpecialistType.SOLUTION_ARCHITECTURE,
-        }
-
-        missing_required = always_required.difference(selected_specialists)
-
-        if missing_required:
-            formatted = ", ".join(sorted(specialist.value for specialist in missing_required))
-            raise ValueError(
-                f"The routing plan is missing always-required specialists: {formatted}."
-            )
-
-        return value
-
-    @property
-    def selected_decisions(self) -> list[SpecialistRoutingDecision]:
-        """Return selected decisions in execution order."""
-
-        return sorted(
-            (decision for decision in self.decisions if decision.selected),
-            key=lambda decision: decision.execution_order or 0,
-        )
-
-    @property
-    def selected_specialists(self) -> list[SpecialistType]:
-        """Return selected specialist types in execution order."""
-
-        return [decision.specialist for decision in self.selected_decisions]
-
-    def get_decision(
-        self,
-        specialist: SpecialistType,
-    ) -> SpecialistRoutingDecision:
-        """Return the routing decision for one specialist."""
-
-        decision = next(
-            (item for item in self.decisions if item.specialist is specialist),
-            None,
-        )
-
-        if decision is None:
-            raise ValueError(f"No routing decision exists for '{specialist.value}'.")
-
-        return decision
 
 
 def route_after_discovery(state: BuildWiseFlowState) -> FlowRoute:
@@ -248,127 +145,266 @@ def route_after_requirements(
     raise ValueError("RequirementsSpecification contains an unsupported decision.")
 
 
-def build_specialist_routing_plan(
+def build_specialist_execution_plan(
     state: BuildWiseFlowState,
-) -> SpecialistRoutingPlan:
+) -> SpecialistExecutionPlan:
     """Build the deterministic specialist execution plan.
 
-    The market/GTM and solution architecture specialists are always selected.
+    Market & GTM and Solution Architecture are always selected. AI, Security,
+    and QA/Evaluation are selected from structured Discovery and Requirements
+    signals only. Product naming or free-form keyword matching is
+    intentionally never used.
 
-    AI, security, and QA/evaluation specialists are selected from structured
-    Discovery and Requirements signals. Product naming or free-form keyword
-    matching is intentionally not used.
+    This is the single planner model consumed by both the Flow (which
+    registers the plan into ``BuildWiseFlowState`` via
+    ``apply_specialist_execution_plan``) and the Technical Planning Crew
+    (which reads ``recommendations`` to decide which specialists to run).
     """
 
     discovery = _require_discovery_result(state)
     requirements = _require_requirements_specification(state)
 
-    decisions: list[SpecialistRoutingDecision] = []
-    next_execution_order = 1
-
-    decisions.append(
-        SpecialistRoutingDecision(
+    recommendations: list[SpecialistRecommendation] = [
+        SpecialistRecommendation(
             specialist=SpecialistType.MARKET_AND_GTM,
-            selected=True,
+            required=True,
             reason=SpecialistSelectionReason.ALWAYS_REQUIRED,
-            rationale=(
+            explanation=(
                 "Market and go-to-market analysis is required for every "
                 "BuildWise product blueprint."
             ),
-            execution_order=next_execution_order,
-        )
-    )
-    next_execution_order += 1
-
-    decisions.append(
-        SpecialistRoutingDecision(
+            estimated_effort="Medium",
+        ),
+        SpecialistRecommendation(
             specialist=SpecialistType.SOLUTION_ARCHITECTURE,
-            selected=True,
+            required=True,
             reason=SpecialistSelectionReason.ALWAYS_REQUIRED,
-            rationale=(
+            explanation=(
                 "Every BuildWise blueprint requires a solution architecture "
                 "mapped to the validated requirements."
             ),
-            execution_order=next_execution_order,
-        )
-    )
-    next_execution_order += 1
+            estimated_effort="Medium",
+        ),
+    ]
 
-    ai_selected, ai_reason, ai_rationale = _evaluate_ai_architect(
+    ai_selected, ai_reason, ai_explanation = _evaluate_ai_architect(
         discovery.capability_classification,
         requirements,
     )
 
-    decisions.append(
-        SpecialistRoutingDecision(
-            specialist=SpecialistType.AI_ARCHITECTURE,
-            selected=ai_selected,
-            reason=ai_reason,
-            rationale=ai_rationale,
-            execution_order=(next_execution_order if ai_selected else None),
-        )
-    )
-
     if ai_selected:
-        next_execution_order += 1
+        recommendations.append(
+            SpecialistRecommendation(
+                specialist=SpecialistType.AI_ARCHITECTURE,
+                required=False,
+                reason=ai_reason,
+                explanation=ai_explanation,
+                estimated_effort="High",
+            )
+        )
 
-    security_selected, security_reason, security_rationale = _evaluate_security_architect(
+    security_selected, security_reason, security_explanation = _evaluate_security_architect(
         discovery=discovery,
         requirements=requirements,
     )
 
-    decisions.append(
-        SpecialistRoutingDecision(
-            specialist=SpecialistType.SECURITY_ARCHITECTURE,
-            selected=security_selected,
-            reason=security_reason,
-            rationale=security_rationale,
-            execution_order=(next_execution_order if security_selected else None),
-        )
-    )
-
     if security_selected:
-        next_execution_order += 1
+        recommendations.append(
+            SpecialistRecommendation(
+                specialist=SpecialistType.SECURITY_ARCHITECTURE,
+                required=False,
+                reason=security_reason,
+                explanation=security_explanation,
+                estimated_effort="Medium",
+            )
+        )
 
-    qa_selected, qa_reason, qa_rationale = _evaluate_qa_architect(
+    qa_selected, qa_reason, qa_explanation = _evaluate_qa_architect(
         discovery=discovery,
         requirements=requirements,
         ai_architect_selected=ai_selected,
     )
 
-    decisions.append(
-        SpecialistRoutingDecision(
-            specialist=SpecialistType.QA_AND_EVALUATION,
-            selected=qa_selected,
-            reason=qa_reason,
-            rationale=qa_rationale,
-            execution_order=(next_execution_order if qa_selected else None),
+    if qa_selected:
+        recommendations.append(
+            SpecialistRecommendation(
+                specialist=SpecialistType.QA_AND_EVALUATION,
+                required=False,
+                reason=qa_reason,
+                explanation=qa_explanation,
+                estimated_effort="Medium",
+            )
         )
+
+    technical_specialists = [SpecialistType.SOLUTION_ARCHITECTURE]
+
+    if ai_selected:
+        technical_specialists.append(SpecialistType.AI_ARCHITECTURE)
+
+    if security_selected:
+        technical_specialists.append(SpecialistType.SECURITY_ARCHITECTURE)
+
+    if qa_selected:
+        technical_specialists.append(SpecialistType.QA_AND_EVALUATION)
+
+    execution_groups = [
+        SpecialistExecutionGroup(
+            name="market_and_gtm",
+            execution_mode=ExecutionMode.PARALLEL,
+            specialists=[SpecialistType.MARKET_AND_GTM],
+            rationale=(
+                "Market and GTM analysis has no dependency on the technical "
+                "architecture and may run concurrently with it."
+            ),
+        ),
+        SpecialistExecutionGroup(
+            name="technical_architecture",
+            execution_mode=ExecutionMode.SEQUENTIAL,
+            specialists=technical_specialists,
+            rationale=(
+                "Solution Architecture must complete before any selected "
+                "AI, Security, or QA specialist runs, since each depends on "
+                "its output inside the Technical Planning Crew."
+            ),
+        ),
+    ]
+
+    dependencies: list[SpecialistDependency] = []
+
+    if ai_selected:
+        dependencies.append(
+            SpecialistDependency(
+                source=SpecialistType.SOLUTION_ARCHITECTURE,
+                target=SpecialistType.AI_ARCHITECTURE,
+                dependency=DependencyType.REQUIRES_OUTPUT,
+                description=(
+                    "AI Architecture designs against the approved Solution "
+                    "Architecture and cannot start before it completes."
+                ),
+            )
+        )
+
+    if security_selected:
+        dependencies.append(
+            SpecialistDependency(
+                source=SpecialistType.SOLUTION_ARCHITECTURE,
+                target=SpecialistType.SECURITY_ARCHITECTURE,
+                dependency=DependencyType.REQUIRES_OUTPUT,
+                description=(
+                    "Security Architecture reviews the approved Solution "
+                    "Architecture's components and connections."
+                ),
+            )
+        )
+
+        if ai_selected:
+            dependencies.append(
+                SpecialistDependency(
+                    source=SpecialistType.AI_ARCHITECTURE,
+                    target=SpecialistType.SECURITY_ARCHITECTURE,
+                    dependency=DependencyType.REQUIRES_OUTPUT,
+                    description=(
+                        "Security Architecture must also review the AI "
+                        "Architecture's model, tool, and agent boundaries."
+                    ),
+                )
+            )
+
+    if qa_selected:
+        dependencies.append(
+            SpecialistDependency(
+                source=SpecialistType.SOLUTION_ARCHITECTURE,
+                target=SpecialistType.QA_AND_EVALUATION,
+                dependency=DependencyType.REQUIRES_OUTPUT,
+                description="QA and Evaluation validates the approved Solution Architecture.",
+            )
+        )
+
+        if ai_selected:
+            dependencies.append(
+                SpecialistDependency(
+                    source=SpecialistType.AI_ARCHITECTURE,
+                    target=SpecialistType.QA_AND_EVALUATION,
+                    dependency=DependencyType.REQUIRES_OUTPUT,
+                    description="QA and Evaluation includes AI evaluation coverage.",
+                )
+            )
+
+        if security_selected:
+            dependencies.append(
+                SpecialistDependency(
+                    source=SpecialistType.SECURITY_ARCHITECTURE,
+                    target=SpecialistType.QA_AND_EVALUATION,
+                    dependency=DependencyType.REQUIRES_OUTPUT,
+                    description="QA and Evaluation validates the security controls.",
+                )
+            )
+
+    excluded_explanations = {
+        SpecialistType.AI_ARCHITECTURE: ai_explanation,
+        SpecialistType.SECURITY_ARCHITECTURE: security_explanation,
+        SpecialistType.QA_AND_EVALUATION: qa_explanation,
+    }
+
+    recommended_specialists = {recommendation.specialist for recommendation in recommendations}
+
+    limitations = [
+        f"{specialist.value}: {excluded_explanations[specialist]}"
+        for specialist in (
+            SpecialistType.AI_ARCHITECTURE,
+            SpecialistType.SECURITY_ARCHITECTURE,
+            SpecialistType.QA_AND_EVALUATION,
+        )
+        if specialist not in recommended_specialists
+    ]
+
+    budget = BudgetDecision(
+        decision=BudgetDecisionType.APPROVED,
+        explanation=(
+            "Deterministic specialist selection requires no budget "
+            "constraint beyond the specialists this plan already selected."
+        ),
+        limitations=limitations,
     )
 
-    return SpecialistRoutingPlan(decisions=decisions)
+    selected_summary = ", ".join(
+        recommendation.specialist.value for recommendation in recommendations
+    )
+
+    return SpecialistExecutionPlan(
+        recommendations=recommendations,
+        execution_groups=execution_groups,
+        dependencies=dependencies,
+        budget=budget,
+        execution_summary=(
+            f"Selected {len(recommendations)} specialist(s) for this "
+            f"consultation: {selected_summary}."
+        ),
+    )
 
 
-def apply_specialist_routing_plan(
+def apply_specialist_execution_plan(
     *,
     state: BuildWiseFlowState,
-    plan: SpecialistRoutingPlan,
+    plan: SpecialistExecutionPlan,
 ) -> None:
-    """Register a specialist routing plan in Flow state.
+    """Register a specialist execution plan in Flow state.
 
     This function keeps state mutation outside the pure decision-building
     function. It should be called once by the specialist-planning Flow step.
+    Only the specialists in ``plan.recommendations`` are registered; every
+    other ``SpecialistType`` is implicitly not selected.
     """
 
     if state.specialist_executions:
-        raise ValueError("Specialist routing has already been applied to this Flow.")
+        raise ValueError("A specialist execution plan has already been applied to this Flow.")
 
-    for decision in plan.decisions:
+    for recommendation in plan.recommendations:
         state.register_specialist(
-            specialist=decision.specialist,
-            selected=decision.selected,
-            reason=(decision.reason.value if decision.reason is not None else None),
-            rationale=decision.rationale,
+            specialist=recommendation.specialist,
+            selected=True,
+            reason=recommendation.reason.value,
+            rationale=recommendation.explanation,
         )
 
 

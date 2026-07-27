@@ -1301,7 +1301,7 @@ class AIGuardrail(BuildWiseModel):
         return self
 
 
-class EvaluationMetric(BuildWiseModel):
+class AIEvaluationMetric(BuildWiseModel):
     """A measurable AI quality or runtime metric."""
 
     id: ArtifactId = Field(default_factory=generate_uuid)
@@ -1640,7 +1640,7 @@ class AIArchitecture(BuildWiseModel):
 
     guardrails: list[AIGuardrail] = Field(min_length=1)
 
-    evaluation_metrics: list[EvaluationMetric] = Field(min_length=1)
+    evaluation_metrics: list[AIEvaluationMetric] = Field(min_length=1)
     evaluation_datasets: list[EvaluationDataset] = Field(min_length=1)
     evaluation_requirements: list[AIEvaluationRequirement] = Field(
         min_length=1,

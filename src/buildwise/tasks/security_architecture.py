@@ -4,6 +4,11 @@ Creates the native CrewAI Task assigned to the Security Architect. The task
 defines identity, secrets, encryption, data protection, threat modeling,
 controls, audit, compliance, and residual risk for the approved solution
 (and AI architecture, when one was selected).
+
+``solution_architecture`` and ``ai_architecture`` each support two input
+modes: same-Crew native task context (when composed inside the Technical
+Planning Crew) or a literal structured value (when the upstream artifact
+already completed in a separate Crew).
 """
 
 from __future__ import annotations
@@ -29,7 +34,9 @@ def create_security_architecture_task(
     *,
     agent: Agent,
     requirements: RequirementsSpecification,
-    solution_architecture: SolutionArchitecture,
+    solution_architecture_task: Task | None = None,
+    solution_architecture: SolutionArchitecture | None = None,
+    ai_architecture_task: Task | None = None,
     ai_architecture: AIArchitecture | None = None,
     revision_request: RevisionRequest | None = None,
     guardrail_max_retries: int = DEFAULT_GUARDRAIL_MAX_RETRIES,
@@ -37,18 +44,24 @@ def create_security_architecture_task(
     """Build the Security Architecture task for the Security Architect.
 
     Only create this task when specialist planning selects security
-    architecture. When AI architecture was also selected, its structured
-    output should already be available and is consumed here; otherwise the
-    task remains fully valid using only requirements and solution
-    architecture.
+    architecture. Exactly one of ``solution_architecture_task`` or
+    ``solution_architecture`` must be supplied. When AI architecture was
+    also selected, supply exactly one of ``ai_architecture_task`` or
+    ``ai_architecture``; when it was not selected, omit both and the task
+    remains fully valid using only requirements and solution architecture.
 
     Args:
         agent: Native CrewAI agent created for
             ``AgentType.SECURITY_ARCHITECT``.
         requirements: The approved RequirementsSpecification.
-        solution_architecture: The approved SolutionArchitecture.
-        ai_architecture: The approved AIArchitecture, when AI architecture
-            was selected. ``None`` when it was not.
+        solution_architecture_task: The Solution Architecture task, when
+            executing in the same Crew.
+        solution_architecture: The completed SolutionArchitecture, when it
+            ran in a separate Crew.
+        ai_architecture_task: The AI Architecture task, when executing in
+            the same Crew and AI architecture was selected.
+        ai_architecture: The completed AIArchitecture, when it ran in a
+            separate Crew and AI architecture was selected.
         revision_request: A bounded targeted-revision instruction from the
             Lead Reviewer.
         guardrail_max_retries: Bounded guardrail retry budget.
@@ -63,12 +76,39 @@ def create_security_architecture_task(
     if guardrail_max_retries < 0:
         raise ValueError("guardrail_max_retries cannot be negative.")
 
-    context_lines = [
-        f"RequirementsSpecification: {requirements.model_dump_json()}",
-        f"SolutionArchitecture: {solution_architecture.model_dump_json()}",
-    ]
+    if solution_architecture_task is None and solution_architecture is None:
+        raise ValueError(
+            "create_security_architecture_task requires either "
+            "solution_architecture_task or solution_architecture."
+        )
 
-    if ai_architecture is not None:
+    if solution_architecture_task is not None and solution_architecture is not None:
+        raise ValueError(
+            "create_security_architecture_task accepts only one of "
+            "solution_architecture_task or solution_architecture, not both."
+        )
+
+    if ai_architecture_task is not None and ai_architecture is not None:
+        raise ValueError(
+            "create_security_architecture_task accepts only one of "
+            "ai_architecture_task or ai_architecture, not both."
+        )
+
+    context_lines = [f"RequirementsSpecification: {requirements.model_dump_json()}"]
+    context_tasks: list[Task] = []
+
+    if solution_architecture_task is not None:
+        context_lines.append("SolutionArchitecture: provided as native task context.")
+        context_tasks.append(solution_architecture_task)
+    else:
+        context_lines.append(
+            f"SolutionArchitecture: {solution_architecture.model_dump_json()}"  # type: ignore[union-attr]
+        )
+
+    if ai_architecture_task is not None:
+        context_lines.append("AIArchitecture: provided as native task context.")
+        context_tasks.append(ai_architecture_task)
+    elif ai_architecture is not None:
         context_lines.append(f"AIArchitecture: {ai_architecture.model_dump_json()}")
 
     description = (
@@ -118,15 +158,20 @@ def create_security_architecture_task(
         _validate_security_completeness,
     )
 
-    return Task(
-        name="security_architecture",
-        description=description,
-        expected_output=expected_output,
-        agent=agent,
-        output_pydantic=SecurityArchitecture,
-        guardrails=guardrails,
-        guardrail_max_retries=guardrail_max_retries,
-    )
+    task_kwargs: dict[str, object] = {
+        "name": "security_architecture",
+        "description": description,
+        "expected_output": expected_output,
+        "agent": agent,
+        "output_pydantic": SecurityArchitecture,
+        "guardrails": guardrails,
+        "guardrail_max_retries": guardrail_max_retries,
+    }
+
+    if context_tasks:
+        task_kwargs["context"] = context_tasks
+
+    return Task(**task_kwargs)
 
 
 def _validate_security_completeness(task_output: TaskOutput) -> tuple[bool, Any]:

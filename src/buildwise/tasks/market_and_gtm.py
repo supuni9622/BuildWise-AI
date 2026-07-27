@@ -3,6 +3,13 @@
 Creates the native CrewAI Task assigned to the Market and GTM Strategist. The
 task evaluates market segments, competitors, positioning, pricing hypotheses,
 channels, and launch experiments for the approved product.
+
+``MarketAndGTMStrategy`` validates its references against a real
+``ProductDefinition`` (persona and feature IDs), so this task always runs
+after Product Definition and Requirements exist. It supports two input
+modes: same-Crew native task context (when composed inside the Product
+Planning Crew) or literal structured values (when the upstream artifacts
+already completed in a separate Crew).
 """
 
 from __future__ import annotations
@@ -14,6 +21,7 @@ from buildwise.domain.product import ProductDefinition
 from buildwise.domain.requirements import RequirementsSpecification
 from buildwise.domain.review import RevisionRequest
 from buildwise.tasks.guardrails import (
+    TaskGuardrail,
     compose_guardrails,
     require_pydantic_output,
     run_domain_validator,
@@ -26,20 +34,34 @@ DEFAULT_GUARDRAIL_MAX_RETRIES = 2
 def create_market_and_gtm_task(
     *,
     agent: Agent,
-    product_definition: ProductDefinition,
-    requirements: RequirementsSpecification,
+    product_definition_task: Task | None = None,
+    requirements_task: Task | None = None,
+    product_definition: ProductDefinition | None = None,
+    requirements: RequirementsSpecification | None = None,
     revision_request: RevisionRequest | None = None,
     guardrail_max_retries: int = DEFAULT_GUARDRAIL_MAX_RETRIES,
 ) -> Task:
     """Build the Market and GTM task for the Market and GTM Strategist.
+
+    Exactly one of ``(product_definition_task, requirements_task)`` or
+    ``(product_definition, requirements)`` must be supplied together. Pass
+    the task pair when Product Definition and Requirements execute inside
+    the same Crew so CrewAI can wire native task context. Pass the
+    structured value pair when both already completed in a separate Crew.
 
     Args:
         agent: Native CrewAI agent created for
             ``AgentType.MARKET_AND_GTM_STRATEGIST``. The agent already owns
             the web_search and web_scraper tools; this task does not
             instantiate or restrict them.
-        product_definition: The approved ProductDefinition.
-        requirements: The approved RequirementsSpecification.
+        product_definition_task: The Product Definition task, when executing
+            in the same Crew.
+        requirements_task: The Requirements task, when executing in the same
+            Crew.
+        product_definition: The completed ProductDefinition, when Product
+            Definition ran in a separate Crew.
+        requirements: The completed RequirementsSpecification, when
+            Requirements ran in a separate Crew.
         revision_request: A bounded targeted-revision instruction from the
             Lead Reviewer.
         guardrail_max_retries: Bounded guardrail retry budget.
@@ -54,12 +76,50 @@ def create_market_and_gtm_task(
     if guardrail_max_retries < 0:
         raise ValueError("guardrail_max_retries cannot be negative.")
 
+    same_crew_mode = product_definition_task is not None or requirements_task is not None
+    structured_mode = product_definition is not None or requirements is not None
+
+    if same_crew_mode and structured_mode:
+        raise ValueError(
+            "create_market_and_gtm_task accepts either "
+            "(product_definition_task, requirements_task) or "
+            "(product_definition, requirements), not both."
+        )
+
+    if same_crew_mode and (product_definition_task is None or requirements_task is None):
+        raise ValueError(
+            "create_market_and_gtm_task requires both product_definition_task "
+            "and requirements_task when using same-Crew context."
+        )
+
+    if structured_mode and (product_definition is None or requirements is None):
+        raise ValueError(
+            "create_market_and_gtm_task requires both product_definition and "
+            "requirements when using structured cross-Crew inputs."
+        )
+
+    if not same_crew_mode and not structured_mode:
+        raise ValueError(
+            "create_market_and_gtm_task requires either "
+            "(product_definition_task, requirements_task) or "
+            "(product_definition, requirements)."
+        )
+
+    context_section = (
+        "Available structured context: the completed Product Definition and "
+        "Requirements task outputs are provided as native task context."
+        if same_crew_mode
+        else (
+            "Available structured context:\n"
+            f"ProductDefinition: {product_definition.model_dump_json()}\n"  # type: ignore[union-attr]
+            f"RequirementsSpecification: {requirements.model_dump_json()}"  # type: ignore[union-attr]
+        )
+    )
+
     description = (
         "Objective: Evaluate the market and go-to-market strategy for the "
         "approved product.\n\n"
-        "Available structured context:\n"
-        f"ProductDefinition: {product_definition.model_dump_json()}\n"
-        f"RequirementsSpecification: {requirements.model_dump_json()}\n\n"
+        f"{context_section}\n\n"
         "Required decisions:\n"
         "- Identify target market segments and mark exactly one as primary.\n"
         "- Analyze direct, indirect, and substitute competitors when "
@@ -95,22 +155,31 @@ def create_market_and_gtm_task(
         "prose."
     )
 
-    guardrails = compose_guardrails(
-        require_pydantic_output(MarketAndGTMStrategy),
-        run_domain_validator(
-            lambda output: MarketAndGTMStrategy.validate_product_ownership(
-                market_and_gtm_strategy=output,
-                product_definition=product_definition,
-            )
-        ),
-    )
+    guardrail_list: list[TaskGuardrail] = [require_pydantic_output(MarketAndGTMStrategy)]
 
-    return Task(
-        name="market_and_gtm_strategy",
-        description=description,
-        expected_output=expected_output,
-        agent=agent,
-        output_pydantic=MarketAndGTMStrategy,
-        guardrails=guardrails,
-        guardrail_max_retries=guardrail_max_retries,
-    )
+    if product_definition is not None:
+        guardrail_list.append(
+            run_domain_validator(
+                lambda output: MarketAndGTMStrategy.validate_product_ownership(
+                    market_and_gtm_strategy=output,
+                    product_definition=product_definition,
+                )
+            )
+        )
+
+    guardrails = compose_guardrails(*guardrail_list)
+
+    task_kwargs: dict[str, object] = {
+        "name": "market_and_gtm_strategy",
+        "description": description,
+        "expected_output": expected_output,
+        "agent": agent,
+        "output_pydantic": MarketAndGTMStrategy,
+        "guardrails": guardrails,
+        "guardrail_max_retries": guardrail_max_retries,
+    }
+
+    if same_crew_mode:
+        task_kwargs["context"] = [product_definition_task, requirements_task]
+
+    return Task(**task_kwargs)

@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from buildwise.domain.common import BlueprintSectionType
-
+from buildwise.domain.enums import BlueprintSectionType
 
 # =============================================================================
 # Source References
