@@ -5,7 +5,8 @@ codebase. Legend: ✅ Built · 🟡 Partial (real logic exists but incomplete) �
 🔴 Missing (nothing built yet).
 
 Assessment baseline: 2026-07-27, including the Consulting Flow, five-table
-PostgreSQL persistence layer, and consultation clarification/resume API.
+PostgreSQL persistence layer, consultation clarification/resume API, and final
+cross-stage output validator.
 
 ```
 Actor → Frontend → FastAPI validation → BuildWise CrewAI Flow
@@ -43,7 +44,7 @@ Actor → Frontend → FastAPI validation → BuildWise CrewAI Flow
 | Lead Review Crew | ✅ Built | `crews/lead_review.py` + `tasks/lead_review.py` |
 | approved → blueprint | 🟡 Partial | The live review router handles `APPROVED` and `APPROVED_WITH_LIMITATIONS`, verifies `approved_for_blueprint`, and invokes an injected `BlueprintBuilder`. The concrete deterministic builder/rendering implementation remains missing |
 | revisions → rerun affected planning Crew | ✅ Built | `flows/revisions.py` deterministically maps Product Definition, Requirements, and Market & GTM to the Product Planning Crew, and Solution, AI, Security, and QA revisions to the Technical Planning Crew. Technical revisions rerun only the target plus selected downstream dependants (Solution → selected AI/Security/QA; AI → selected Security/QA; Security → selected QA; QA only). The Flow retains revision history and enforces `state.limits.maximum_specialist_revisions`; no revision-planning Agent is used |
-| Output validation | 🟡 Partial | The Flow rejects missing/wrong structured Discovery and Lead Review outputs, aggregate assemblers validate Product/Technical Planning, and state setters enforce session ownership and specialist selection. The dedicated `validation/` package and a unified post-Crew validation service remain missing |
+| Output validation | ✅ Built | `validation/output_validator.py::validate_output` performs the final cross-stage pass: it requires all blueprint inputs, verifies session ownership, reruns existing aggregate/ownership/execution-graph validators, checks selected specialist outputs against the execution plan, validates the Lead Review decision, and rejects approval while a blocking revision remains |
 | Deterministic Blueprint Generator | 🔴 Missing | `reporting/__init__.py` is empty. `ProductBlueprint`/`BlueprintSection` models exist (`domain/blueprint.py`) with no assembler |
 | Final Report / Frontend | 🔴 Missing | Depends on the blueprint generator above |
 | Persistence (implicit, cross-cutting) | ✅ Built | `persistence/models.py` defines the five-table MVP schema; `repositories.py` handles consultation snapshots, versioned artifacts, clarification rounds, revisions, and usage; `flow_store.py::BuildWiseFlowStore` is the native CrewAI adapter. The full Flow persistence integration is tested. PostgreSQL is running through Docker Compose and the active local configuration connects on `localhost:5433`; containers use `postgres:5432` internally |
@@ -125,13 +126,18 @@ the application container receives the Compose-network URL using
 `postgres:5432`. Only one `DATABASE_URL` is used in each runtime context.
 SQLite and a local `data/` directory are not required for the active setup.
 
-### 4. 🟡 Partial — Output validation — `src/buildwise/validation/`
-The Flow-side check described in every Crew PRD: reject a "successful"
-`CrewOutput` when `.pydantic` is `None`, the wrong type, or fails ownership —
-largely already covered by the same `run_domain_validator`/
-`require_pydantic_output` machinery in `tasks/guardrails.py`, but the Flow
-still needs one more pass after assembling `ProductPlanningResult`/
-`TechnicalPlanningResult`/`LeadReview` before persisting them.
+### 4. ✅ Done — Output validation — `src/buildwise/validation/`
+`validation/output_validator.py::validate_output(state)` is the final
+deterministic cross-stage pass before blueprint assembly. It requires
+Discovery, Product Planning, the specialist execution plan, Technical
+Planning, and Lead Review; verifies all session-owned artifacts; reruns the
+existing aggregate, ownership, and execution-graph domain validators; checks
+the technical outputs against selected specialists; and prevents blueprint
+approval when the Lead Review is inconsistent or retains a blocking revision.
+
+Lead Review decision consistency now has one reusable domain check,
+`LeadReview.validate_decision_consistency()`, shared by the task guardrail and
+the final output validator rather than duplicating the decision rules.
 
 ### 5. Deterministic Blueprint Generator — `src/buildwise/reporting/`
 Consume the approved aggregates + `LeadReview`, produce a `ProductBlueprint`
@@ -177,10 +183,9 @@ result. Creating the service initializes the five-table schema.
   `.maximum_estimated_cost_usd`. The Flow now enforces
   `.maximum_session_tokens` from aggregated Crew usage; `.maximum_tool_calls`
   and `.maximum_execution_seconds` remain unenforced.
-- `reporting/` and `validation/` currently contain only a one-line docstring
-  each (`"""Blueprint assembly and rendering."""` /
-  `"""Deterministic and model-assisted validation."""`) — no code yet; first
-  real content in either will define their shape.
+- `reporting/` still contains only its package docstring and has no blueprint
+  assembler. `validation/` now contains the final cross-stage validator
+  described in step 4.
 
 ---
 
@@ -303,7 +308,7 @@ further alignment work.
 | Contract element | Status | Notes |
 |---|---|---|
 | Flow-first orchestration (Flows own routing/state/pause-resume/specialist selection) | ✅ Built | `BuildWiseConsultingFlow` owns routing, aggregate state, clarification pause/resume, planner calls, Crew execution, revisions, usage capture, completion, and deterministic failure routes |
-| Application Service Layer (`full_architecture_flow.md` §3: Session Service, Flow Execution Service, Human Feedback Service, Blueprint Service, Usage and Cost Service, Validation Service, Guardrail Service, Tool Execution Service) | 🟡 Partial | `api/v1/consultation_service.py::ConsultationService` now provides the session/Flow/human-feedback boundary for start, resume, status, and result operations. The broader package structure and separate Blueprint, Usage/Cost, Validation, Guardrail, and Tool Execution services remain missing |
+| Application Service Layer (`full_architecture_flow.md` §3: Session Service, Flow Execution Service, Human Feedback Service, Blueprint Service, Usage and Cost Service, Validation Service, Guardrail Service, Tool Execution Service) | 🟡 Partial | `api/v1/consultation_service.py::ConsultationService` provides the session/Flow/human-feedback boundary, while `validation/output_validator.py` and `tasks/guardrails.py` provide the validation and guardrail logic. The broader package structure and separate Blueprint, Usage/Cost, and Tool Execution services remain missing |
 | JSON-first Crew standard (`crewai_runtime_architecture.md` §22, §25: `crews/<name>/crew.jsonc` + `agents/<name>.jsonc`, loaded by a shared Python loader) | 🔴 Missing / diverged | The actual implementation is 100% Python: `crews/*.py` factory functions (`create_discovery_crew`, `create_product_planning_crew`, etc.), `tasks/*.py`, and `agents/*.py` contract modules (`agents/base.py::AgentContract`, `agents/registry.py`, `agents/factory.py`). No `.jsonc` file exists anywhere in `src/`. This is a foundational, repo-wide structural choice that contradicts the contract's canonical folder tree — needs an explicit decision to update the contract or migrate the code |
 | Final folder structure (`crewai_runtime_architecture.md` §22) | 🟡 Diverged | Beyond the JSON-first Crew point above: `infrastructure/` exists as a directory but is completely empty (no `__init__.py`, no `llm.py`/`clock.py`); `knowledge/` is empty (no `README.md`, no `product/`/`architecture/`/etc. subdirs); `observability/` has `context.py` + `middleware.py`, not the target's `events.py`/`tracing.py`/`usage.py`; `tools/` has no `policies.py` or `research/`; `flows/` has no `persistence.py` or `guardrails.py` (guardrails currently live in `tasks/guardrails.py` instead); domain module names differ from the target list (`market_and_gtm.py` vs. target `market.py`, `qa.py` vs. target `qa_evaluation.py`) and the domain package has grown several modules the contract's tree doesn't mention (`product_planning.py`, `technical_planning.py`, `specialist_planning.py`, `agent.py`, `api.py`) — a natural result of the Crew-refactor work happening after this contract was written |
 | Crews are focused single-outcome units | ✅ Built | The four real Crews (`discovery`, `product_planning`, `technical_planning`, `lead_review`) each match this principle in spirit even though they aren't JSON-defined |

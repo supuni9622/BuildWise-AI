@@ -192,3 +192,35 @@ class LeadReview(BaseModel):
     )
 
     notes: str | None = None
+
+    def validate_decision_consistency(self) -> None:
+        """Validate whether the decision permits blueprint assembly."""
+
+        blocking = [request for request in self.revision_requests if request.blocking]
+
+        if self.decision is ReviewDecision.REVISION_REQUIRED and not self.revision_requests:
+            raise ValueError("A revision_required decision requires revision_requests.")
+
+        if self.decision in {
+            ReviewDecision.APPROVED,
+            ReviewDecision.APPROVED_WITH_LIMITATIONS,
+        } and blocking:
+            raise ValueError("An approved decision cannot contain a blocking revision request.")
+
+        if (
+            self.decision is ReviewDecision.REJECTED
+            and not self.weaknesses
+            and not self.contradictions
+        ):
+            raise ValueError(
+                "A rejected decision requires documented weaknesses or contradictions."
+            )
+
+        expected_approval = self.decision in {
+            ReviewDecision.APPROVED,
+            ReviewDecision.APPROVED_WITH_LIMITATIONS,
+        }
+        if self.approved_for_blueprint != expected_approval:
+            raise ValueError(
+                "approved_for_blueprint must be true only for an approved decision."
+            )

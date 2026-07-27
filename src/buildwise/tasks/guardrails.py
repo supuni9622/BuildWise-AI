@@ -173,46 +173,10 @@ def require_review_consistency(task_output: TaskOutput) -> tuple[bool, Any]:
             ),
         )
 
-    blocking_revisions = [request for request in output.revision_requests if request.blocking]
-
-    if output.decision == "revision_required" and not output.revision_requests:
-        return (
-            False,
-            ("A revision_required decision requires at least one entry in revision_requests."),
-        )
-
-    if output.decision in {"approved", "approved_with_limitations"} and blocking_revisions:
-        return (
-            False,
-            (
-                "An approved decision cannot contain a blocking revision "
-                "request. Resolve the blocking items or change the "
-                "decision to revision_required."
-            ),
-        )
-
-    if output.decision == "rejected" and not output.weaknesses and not output.contradictions:
-        return (
-            False,
-            (
-                "A rejected decision requires documented weaknesses or "
-                "contradictions explaining the rejection."
-            ),
-        )
-
-    expected_approved_for_blueprint = output.decision in {
-        "approved",
-        "approved_with_limitations",
-    }
-
-    if output.approved_for_blueprint != expected_approved_for_blueprint:
-        return (
-            False,
-            (
-                "approved_for_blueprint must be true only when decision is "
-                "'approved' or 'approved_with_limitations'."
-            ),
-        )
+    try:
+        output.validate_decision_consistency()
+    except ValueError as exc:
+        return (False, str(exc))
 
     return (True, task_output)
 
