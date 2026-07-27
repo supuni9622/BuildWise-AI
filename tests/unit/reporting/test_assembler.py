@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from buildwise.application.cost_aggregator import aggregate_project_costs
 from buildwise.domain.architecture import SolutionArchitecture
 from buildwise.domain.enums import BlueprintSectionType, ReviewDecision
@@ -10,6 +12,7 @@ from buildwise.domain.specialist_planning import SpecialistExecutionPlan
 from buildwise.domain.technical_planning import TechnicalPlanningResult
 from buildwise.domain.usage import UsageRecord, UsageSummary
 from buildwise.reporting import assemble_blueprint, write_blueprint_markdown
+from buildwise.validation.final_output_validator import validate_final_output
 from fixtures.planning import build_product_planning_inputs
 
 
@@ -89,6 +92,59 @@ def test_assemble_blueprint_keeps_open_questions_distinct_from_limitations(
     assert "## Limitations" in blueprint.generated_markdown
     assert blueprint.usage_summary.total_tokens == 30
     assert blueprint.usage_summary.model_usage == {"test-model": 1}
+    validate_final_output(blueprint)
 
     output = write_blueprint_markdown(blueprint, tmp_path / "blueprint.md")
     assert output.read_text(encoding="utf-8") == blueprint.generated_markdown
+
+
+def test_final_output_validator_rejects_stale_markdown() -> None:
+    discovery, product_planning = build_product_planning_inputs()
+    solution = SolutionArchitecture.model_construct(
+        session_id=discovery.session_id,
+        requirements_specification_id=product_planning.requirements.id,
+        executive_summary="A modular architecture.",
+        architecture_style="modular_monolith",
+        architecture_style_rationale="It minimizes early complexity.",
+        components=[],
+        technology_choices=[],
+        deployment_summary="Deploy one application.",
+        assumptions=[],
+        open_questions=[],
+        limitations=[],
+        risks=[],
+        architecture_cost_estimates=[],
+    )
+    technical = TechnicalPlanningResult.model_construct(
+        session_id=discovery.session_id,
+        solution_architecture=solution,
+        ai_architecture=None,
+        security_architecture=None,
+        qa_evaluation=None,
+    )
+    blueprint = assemble_blueprint(
+        discovery=discovery,
+        product_planning=product_planning,
+        specialist_plan=SpecialistExecutionPlan.model_construct(
+            recommendations=[],
+            execution_groups=[],
+            dependencies=[],
+            execution_summary="Run solution architecture.",
+        ),
+        technical_planning=technical,
+        cost_summary=aggregate_project_costs(
+            product_planning=product_planning,
+            technical_planning=technical,
+        ),
+        lead_review=LeadReview(
+            executive_summary="Ready for implementation.",
+            decision=ReviewDecision.APPROVED,
+            approved_for_blueprint=True,
+        ),
+        usage_summary=UsageSummary(),
+    )
+
+    stale = blueprint.model_copy(update={"generated_markdown": "# stale\n"})
+
+    with pytest.raises(ValueError, match="generated_markdown is stale"):
+        validate_final_output(stale)

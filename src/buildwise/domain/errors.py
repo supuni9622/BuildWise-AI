@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from buildwise.domain.guardrails import InputGuardrailViolation
 from buildwise.observability.context import get_request_id
 
 
@@ -44,6 +45,26 @@ def _response(
 
 def register_exception_handlers(app: FastAPI) -> None:
     logger = structlog.get_logger(__name__)
+
+    @app.exception_handler(InputGuardrailViolation)
+    async def handle_input_guardrail(
+        request: Request,
+        exc: InputGuardrailViolation,
+    ) -> JSONResponse:
+        logger.warning(
+            "input_guardrail_rejected",
+            path=request.url.path,
+            status="rejected",
+            error_code="INPUT_GUARDRAIL_REJECTED",
+            detected_patterns=exc.result.detected_patterns,
+        )
+        return _response(
+            status_code=400,
+            code="INPUT_GUARDRAIL_REJECTED",
+            message=str(exc),
+            recoverable=True,
+            stage="input_guardrail",
+        )
 
     @app.exception_handler(RequestValidationError)
     async def handle_request_validation(

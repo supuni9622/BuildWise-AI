@@ -8,6 +8,7 @@ from threading import Lock
 import structlog
 from crewai.flow.persistence.base import FlowPersistence
 
+from buildwise.application.input_guardrail import InputGuardrailProcessor
 from buildwise.domain.api import (
     ConsultationResponse,
     ConsultationResultResponse,
@@ -45,15 +46,18 @@ class ConsultationService:
         *,
         flow_store: BuildWiseFlowStore,
         flow_factory: FlowFactory = _default_flow_factory,
+        input_guardrail: InputGuardrailProcessor | None = None,
     ) -> None:
         self._flow_store = flow_store
         self._flow_factory = flow_factory
+        self._input_guardrail = input_guardrail or InputGuardrailProcessor()
         self._active_consultations: set[str] = set()
         self._active_lock = Lock()
 
     def enqueue_start(self, request: StartConsultationRequest) -> ConsultationResponse:
         """Persist a new consultation before background execution begins."""
 
+        self._input_guardrail.require_allowed(request)
         state = BuildWiseFlowState(intake_request=request)
         consultation_id = str(state.session_id)
         self._flow_store.save_state(
@@ -68,6 +72,7 @@ class ConsultationService:
         consultation_id: str,
         request: SubmitClarificationsRequest,
     ) -> ConsultationResponse:
+        self._input_guardrail.require_allowed(request)
         state = self._load_state(consultation_id)
         if state.status is not SessionStatus.AWAITING_USER_INPUT:
             raise ValueError("The consultation is not awaiting clarification answers.")

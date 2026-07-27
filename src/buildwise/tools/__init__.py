@@ -1,7 +1,7 @@
 """Official CrewAI tools used by BuildWise.
 
-BuildWise intentionally reuses CrewAI's native tool ecosystem instead of
-implementing custom wrappers.
+BuildWise reuses CrewAI's native tool ecosystem and places a deterministic
+sanitizing proxy around resolved tools.
 
 The ToolRegistry provides:
 
@@ -9,6 +9,7 @@ The ToolRegistry provides:
 - centralized configuration
 - stable BuildWise tool identifiers
 - dependency injection for the Agent Factory
+- mandatory output sanitization before agent use
 
 Agents should obtain tools through the registry rather than instantiating
 CrewAI tools directly.

@@ -132,6 +132,12 @@ def test_mocked_consulting_flow_completes(
         "validate_output",
         lambda checked_state: validation_calls.append(checked_state),
     )
+    final_validation_calls: list[ProductBlueprint] = []
+    monkeypatch.setattr(
+        flow_module,
+        "validate_final_output",
+        lambda checked_blueprint: final_validation_calls.append(checked_blueprint),
+    )
 
     engine = create_engine(f"sqlite:///{tmp_path / 'flow.db'}")
     flow = BuildWiseConsultingFlow(
@@ -153,6 +159,7 @@ def test_mocked_consulting_flow_completes(
     assert flow.state.technical_planning_result is technical
     assert flow.state.lead_review is review
     assert validation_calls == [flow.state]
+    assert final_validation_calls == [result]
     with Session(engine) as session:
         assert session.get(ConsultationRecord, str(state.session_id)) is not None
         artifact_types = set(session.scalars(select(ArtifactRecord.artifact_type)).all())
@@ -383,6 +390,7 @@ def test_serialized_clarification_state_resumes_through_completion(
         lambda *_args, **_kwargs: technical,
     )
     monkeypatch.setattr(flow_module, "validate_output", lambda _state: None)
+    monkeypatch.setattr(flow_module, "validate_final_output", lambda _blueprint: None)
     flow = BuildWiseConsultingFlow(
         initial_state=restored_state,
         settings=_settings(report_storage_path=tmp_path / "reports"),

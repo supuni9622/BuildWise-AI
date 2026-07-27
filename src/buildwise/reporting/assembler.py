@@ -314,7 +314,9 @@ def _section(
         section=section,
         title=title,
         summary=summary,
-        markdown=f"## {title}\n\n{body or '_None recorded._'}",
+        markdown=(
+            f"## {title}\n\n_{summary}_\n\n{body or '_None recorded._'}"
+        ),
     )
 
 

@@ -68,6 +68,7 @@ from buildwise.reporting.storage import (
     BlueprintReportStorage,
     create_blueprint_report_storage,
 )
+from buildwise.validation.final_output_validator import validate_final_output
 from buildwise.validation.output_validator import validate_output
 
 logger = structlog.get_logger(__name__)
@@ -427,6 +428,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
             lead_review=self._require(self.state.lead_review, "lead_review"),
             usage_summary=self.state.usage,
         )
+        validate_final_output(blueprint)
         self.state.product_blueprint = blueprint
         review = self._require(self.state.lead_review, "lead_review")
         if review.decision is ReviewDecision.APPROVED_WITH_LIMITATIONS:
