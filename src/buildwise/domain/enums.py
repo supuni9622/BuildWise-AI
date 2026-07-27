@@ -283,6 +283,7 @@ class BlueprintSectionType(StrEnum):
     ROADMAP = "roadmap"
     COSTS = "costs"
     RISKS_AND_ASSUMPTIONS = "risks_and_assumptions"
+    OPEN_QUESTIONS = "open_questions"
     IMPLEMENTATION_GUIDANCE = "implementation_guidance"
     LIMITATIONS = "limitations"
 

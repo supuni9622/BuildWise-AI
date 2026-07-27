@@ -42,11 +42,11 @@ Actor → Frontend → FastAPI validation → BuildWise CrewAI Flow
 | Technical Planning Crew | ✅ Built | `crews/technical_planning.py`, incl. `assemble_technical_planning_result` → `TechnicalPlanningResult` |
 | Cost Aggregator | 🟡 Partial | The Flow converts each Crew's `UsageMetrics` into a `UsageRecord`, accumulates prompt/completion/total tokens and agent executions in `UsageSummary`, and enforces `maximum_session_tokens`. Provider/model attribution, estimated cost, tool calls, retries, and execution duration are not yet populated |
 | Lead Review Crew | ✅ Built | `crews/lead_review.py` + `tasks/lead_review.py` |
-| approved → blueprint | 🟡 Partial | The live review router handles `APPROVED` and `APPROVED_WITH_LIMITATIONS`, verifies `approved_for_blueprint`, and invokes an injected `BlueprintBuilder`. The concrete deterministic builder/rendering implementation remains missing |
+| approved → blueprint | ✅ Built | The live review router handles `APPROVED` and `APPROVED_WITH_LIMITATIONS`, verifies `approved_for_blueprint`, and invokes `BlueprintAssembler` by default while retaining the injectable `BlueprintBuilder` boundary |
 | revisions → rerun affected planning Crew | ✅ Built | `flows/revisions.py` deterministically maps Product Definition, Requirements, and Market & GTM to the Product Planning Crew, and Solution, AI, Security, and QA revisions to the Technical Planning Crew. Technical revisions rerun only the target plus selected downstream dependants (Solution → selected AI/Security/QA; AI → selected Security/QA; Security → selected QA; QA only). The Flow retains revision history and enforces `state.limits.maximum_specialist_revisions`; no revision-planning Agent is used |
 | Output validation | ✅ Built | `validation/output_validator.py::validate_output` performs the final cross-stage pass: it requires all blueprint inputs, verifies session ownership, reruns existing aggregate/ownership/execution-graph validators, checks selected specialist outputs against the execution plan, validates the Lead Review decision, and rejects approval while a blocking revision remains |
-| Deterministic Blueprint Generator | 🔴 Missing | `reporting/__init__.py` is empty. `ProductBlueprint`/`BlueprintSection` models exist (`domain/blueprint.py`) with no assembler |
-| Final Report / Frontend | 🔴 Missing | Depends on the blueprint generator above |
+| Deterministic Blueprint Generator | ✅ Built | `reporting/assembler.py` deterministically maps the approved aggregates and usage summary into all 17 `ProductBlueprint` sections; `reporting/markdown_renderer.py` renders and writes `blueprint.md` without an LLM call |
+| Final Report / Frontend | 🟡 Partial | The Markdown report is generated and can be written as `blueprint.md`; no frontend exists in this repository |
 | Persistence (implicit, cross-cutting) | ✅ Built | `persistence/models.py` defines the five-table MVP schema; `repositories.py` handles consultation snapshots, versioned artifacts, clarification rounds, revisions, and usage; `flow_store.py::BuildWiseFlowStore` is the native CrewAI adapter. The full Flow persistence integration is tested. PostgreSQL is running through Docker Compose and the active local configuration connects on `localhost:5433`; containers use `postgres:5432` internally |
 
 ---
@@ -139,13 +139,14 @@ Lead Review decision consistency now has one reusable domain check,
 `LeadReview.validate_decision_consistency()`, shared by the task guardrail and
 the final output validator rather than duplicating the decision rules.
 
-### 5. Deterministic Blueprint Generator — `src/buildwise/reporting/`
-Consume the approved aggregates + `LeadReview`, produce a `ProductBlueprint`
-(model already exists), render Markdown. No LLM call needed per the PRDs
-unless deterministic assembly proves unreadable later.
-
-The Flow-side `BlueprintBuilder` protocol and approval boundary now exist;
-the concrete builder is still required.
+### 5. ✅ Done — Deterministic Blueprint Generator — `src/buildwise/reporting/`
+`BlueprintAssembler` consumes Discovery, Product Planning, the specialist
+execution plan, Technical Planning, Lead Review, and the Flow usage summary.
+It produces a 17-section `ProductBlueprint`, aggregates risks, assumptions,
+open questions, limitations, implementation phases, and usage, and renders
+the complete Markdown deterministically. `MarkdownRenderer` can write that
+content to `blueprint.md`. The live Flow uses this assembler by default; no
+LLM call is involved.
 
 ### 6. Complete usage and runtime-budget accounting
 Extend the new Flow-owned token aggregator with provider/model attribution,
@@ -183,9 +184,8 @@ result. Creating the service initializes the five-table schema.
   `.maximum_estimated_cost_usd`. The Flow now enforces
   `.maximum_session_tokens` from aggregated Crew usage; `.maximum_tool_calls`
   and `.maximum_execution_seconds` remain unenforced.
-- `reporting/` still contains only its package docstring and has no blueprint
-  assembler. `validation/` now contains the final cross-stage validator
-  described in step 4.
+- `reporting/` now contains the deterministic assembler and Markdown renderer;
+  `validation/` contains the final cross-stage validator described in step 4.
 
 ---
 
@@ -204,8 +204,8 @@ Output shape. Same legend: ✅ Built · 🟡 Partial · 🔴 Missing.
 | FR2 | Generate dynamic questions | ✅ Built | Discovery produces `ClarificationQuestionSet` and the Flow exposes it as the typed pause result |
 | FR3 | Pause and resume sessions | ✅ Built | The Flow pauses in `AWAITING_USER_INPUT`; `POST /api/v1/consultations/{id}/clarifications` reloads its durable state, validates the active round/question set, checkpoints answers, and resumes execution to the next pause or terminal state |
 | FR4 | Select specialists dynamically | ✅ Built | The live Flow calls `SpecialistPlanner.create_execution_plan(...)`, stores its plan, and uses it to construct Technical Planning |
-| FR5 | Generate product blueprint | 🔴 Missing | `ProductBlueprint`/`BlueprintSection` models exist (`domain/blueprint.py`); `reporting/__init__.py` is an empty stub — no assembler produces one |
-| FR6 | Support markdown export | 🔴 Missing | `ProductBlueprint.generated_markdown` is a required field in the model, but nothing populates it since no generator exists |
+| FR5 | Generate product blueprint | ✅ Built | `reporting/assembler.py::BlueprintAssembler` produces the typed blueprint from the approved stage aggregates and is the Flow's default builder |
+| FR6 | Support markdown export | ✅ Built | `reporting/markdown_renderer.py` populates `generated_markdown` and writes a deterministic `blueprint.md` |
 | FR7 | Provide execution tracing | 🟡 Partial | HTTP request tracing and a live CrewAI Flow execution path exist, with stage-level structlog events. Explicit CrewAI trace configuration and per-session trace persistence remain missing |
 
 ## Non-Functional Requirements
@@ -250,8 +250,8 @@ Output shape. Same legend: ✅ Built · 🟡 Partial · 🔴 Missing.
 ## Final Output — Product Blueprint sections
 
 PRD specifies 12 sections; the actual `BlueprintSectionType` enum
-(`domain/enums.py`) defines 16. No assembler exists yet to populate any of
-them (see FR5/FR6 above) — this table compares model *shape* only.
+(`domain/enums.py`) defines 17. The deterministic assembler populates all of
+them.
 
 | PRD section | Status | Codebase equivalent |
 |---|---|---|
@@ -265,7 +265,7 @@ them (see FR5/FR6 above) — this table compares model *shape* only.
 | 8. Evaluation | ✅ Built | `QA_AND_EVALUATION` |
 | 9. Risks | ✅ Built (merged) | `RISKS_AND_ASSUMPTIONS` (combined with Assumptions) |
 | 10. Delivery Roadmap | ✅ Built | `ROADMAP` |
-| 11. Open Questions | 🔴 Missing | No matching enum value or model field; `ProductBlueprint.limitations` is not the same concept |
+| 11. Open Questions | ✅ Built | `OPEN_QUESTIONS` plus `ProductBlueprint.open_questions`; unresolved decisions remain distinct from constraints in `limitations` |
 | 12. Final Recommendation | 🟡 Different shape | `ProductBlueprint.recommendations: list[str]` exists as a top-level field, not as a `BlueprintSectionType` section |
 | *(not in PRD)* | Extra | Codebase also defines `FEATURES_AND_SCOPE`, `USER_JOURNEYS`, `COSTS`, `IMPLEMENTATION_GUIDANCE`, `LIMITATIONS` — finer-grained than the PRD's 12 sections |
 
@@ -283,9 +283,9 @@ them (see FR5/FR6 above) — this table compares model *shape* only.
 2. **Prompt Injection Protection is unimplemented** — the PRD calls it out
    explicitly under Security, and nothing in `tasks/` or `domain/intake.py`
    addresses it beyond standard Pydantic schema validation.
-3. **"Open Questions" has no home** in the current blueprint model — every
-   other PRD section maps onto an existing `BlueprintSectionType` (sometimes
-   renamed/merged); this one doesn't.
+3. ~~**"Open Questions" has no home**~~ **Resolved.**
+   `ProductBlueprint.open_questions` and `BlueprintSectionType.OPEN_QUESTIONS`
+   now represent unresolved decisions independently from limitations.
 
 ---
 

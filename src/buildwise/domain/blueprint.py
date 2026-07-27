@@ -140,6 +140,11 @@ class ProductBlueprint(BaseModel):
         default_factory=list,
     )
 
+    open_questions: list[str] = Field(
+        default_factory=list,
+        description="Unresolved decisions that still require an answer.",
+    )
+
     limitations: list[str] = Field(
         default_factory=list,
     )

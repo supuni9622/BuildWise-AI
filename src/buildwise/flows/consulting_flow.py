@@ -39,7 +39,7 @@ from buildwise.domain.review import LeadReview, RevisionRequest
 from buildwise.domain.session import SessionError
 from buildwise.domain.specialist_planning import SpecialistExecutionPlan
 from buildwise.domain.technical_planning import TechnicalPlanningResult
-from buildwise.domain.usage import UsageRecord
+from buildwise.domain.usage import UsageRecord, UsageSummary
 from buildwise.flows.revisions import (
     PRODUCT_REVISION_TARGETS,
     TECHNICAL_REVISION_TARGETS,
@@ -55,6 +55,7 @@ from buildwise.flows.routing import (
 )
 from buildwise.flows.state import BuildWiseFlowState
 from buildwise.planning.planner import SpecialistPlanner
+from buildwise.reporting.assembler import BlueprintAssembler
 
 logger = structlog.get_logger(__name__)
 
@@ -83,7 +84,7 @@ class _NullFlowPersistence(FlowPersistence):
 
 
 class BlueprintBuilder(Protocol):
-    """Boundary for the out-of-scope deterministic blueprint renderer."""
+    """Boundary for deterministic blueprint assembly."""
 
     def build(
         self,
@@ -93,24 +94,9 @@ class BlueprintBuilder(Protocol):
         specialist_plan: SpecialistExecutionPlan,
         technical_planning: TechnicalPlanningResult,
         lead_review: LeadReview,
+        usage_summary: UsageSummary,
     ) -> ProductBlueprint:
         """Build the approved final blueprint."""
-
-
-class MissingBlueprintBuilder:
-    """Fail clearly when the future reporting implementation is not injected."""
-
-    def build(
-        self,
-        *,
-        discovery: DiscoveryResult,
-        product_planning: ProductPlanningResult,
-        specialist_plan: SpecialistExecutionPlan,
-        technical_planning: TechnicalPlanningResult,
-        lead_review: LeadReview,
-    ) -> ProductBlueprint:
-        del discovery, product_planning, specialist_plan, technical_planning, lead_review
-        raise RuntimeError("A BlueprintBuilder must be supplied to complete the consulting Flow.")
 
 
 @persist(_NullFlowPersistence())
@@ -148,7 +134,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
         self._settings = resolved_settings
         self._agent_factory = agent_factory or AgentFactory(settings=resolved_settings)
         self._planner = planner or SpecialistPlanner()
-        self._blueprint_builder = blueprint_builder or MissingBlueprintBuilder()
+        self._blueprint_builder = blueprint_builder or BlueprintAssembler()
         self._discovery_crew_factory = discovery_crew_factory
         self._product_planning_crew_factory = product_planning_crew_factory
         self._technical_planning_crew_factory = technical_planning_crew_factory
@@ -384,6 +370,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
                 "technical_planning_result",
             ),
             lead_review=self._require(self.state.lead_review, "lead_review"),
+            usage_summary=self.state.usage,
         )
         self.state.product_blueprint = blueprint
         review = self._require(self.state.lead_review, "lead_review")
