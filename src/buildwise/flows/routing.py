@@ -4,10 +4,12 @@ from enum import StrEnum
 
 from buildwise.domain.discovery import DiscoveryResult
 from buildwise.domain.enums import (
+    ReviewDecision,
     SessionStage,
     SessionStatus,
     SpecialistType,
 )
+from buildwise.domain.review import LeadReview
 from buildwise.domain.specialist_planning import SpecialistExecutionPlan
 from buildwise.flows.state import BuildWiseFlowState
 
@@ -232,27 +234,26 @@ def route_after_specialists(
     return FlowRoute.RUN_LEAD_REVIEW
 
 
-def route_after_review(
-    *,
-    revision_required: bool,
-    approved: bool,
-) -> FlowRoute:
-    """Translate a structured Lead Reviewer decision into a Flow route.
+def route_after_review(review: LeadReview) -> FlowRoute:
+    """Translate the canonical Lead Review decision into one Flow route."""
 
-    The complete review domain model will replace these two explicit flags
-    when `buildwise.domain.review` is implemented.
-    """
-
-    if revision_required and approved:
-        raise ValueError("A review cannot be approved while also requiring revision.")
-
-    if revision_required:
+    if review.decision is ReviewDecision.REVISION_REQUIRED:
+        if not review.revision_requests:
+            raise ValueError("A revision-required review must include revision requests.")
         return FlowRoute.RUN_TARGETED_REVISION
 
-    if approved:
+    if review.decision in {
+        ReviewDecision.APPROVED,
+        ReviewDecision.APPROVED_WITH_LIMITATIONS,
+    }:
+        if not review.approved_for_blueprint:
+            raise ValueError("An approved review must allow blueprint assembly.")
         return FlowRoute.ASSEMBLE_BLUEPRINT
 
-    return FlowRoute.FAIL_FLOW
+    if review.decision is ReviewDecision.REJECTED:
+        return FlowRoute.FAIL_FLOW
+
+    raise ValueError("LeadReview contains an unsupported decision.")
 
 
 def route_after_blueprint_assembly(

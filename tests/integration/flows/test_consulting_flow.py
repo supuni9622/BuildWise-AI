@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from crewai import CrewOutput
 from pydantic import SecretStr
 
@@ -18,11 +19,12 @@ from buildwise.domain.discovery import (
     DiscoveryResult,
     Unknown,
 )
-from buildwise.domain.enums import ReviewDecision, SessionStatus
+from buildwise.domain.enums import ReviewDecision, RevisionTarget, SessionStatus
 from buildwise.domain.intake import ClarificationAnswer, ProductIdeaRequest
-from buildwise.domain.review import LeadReview
+from buildwise.domain.review import LeadReview, RevisionRequest
 from buildwise.domain.technical_planning import TechnicalPlanningResult
 from buildwise.flows.consulting_flow import BuildWiseConsultingFlow
+from buildwise.flows.routing import FlowRoute, route_after_review
 from buildwise.flows.state import BuildWiseFlowState
 from fixtures.planning import build_discovery_result, build_product_planning_inputs
 
@@ -205,3 +207,138 @@ def test_discovery_fixture_matches_flow_session() -> None:
     discovery = build_discovery_result(session_id=state.session_id)
 
     assert discovery.session_id == state.session_id
+
+
+@pytest.mark.parametrize(
+    ("decision", "approved", "revision_requests", "expected"),
+    [
+        (ReviewDecision.APPROVED, True, [], FlowRoute.ASSEMBLE_BLUEPRINT),
+        (
+            ReviewDecision.APPROVED_WITH_LIMITATIONS,
+            True,
+            [],
+            FlowRoute.ASSEMBLE_BLUEPRINT,
+        ),
+        (
+            ReviewDecision.REVISION_REQUIRED,
+            False,
+            [
+                RevisionRequest(
+                    target=RevisionTarget.REQUIREMENTS,
+                    reason="Requirements need another pass.",
+                )
+            ],
+            FlowRoute.RUN_TARGETED_REVISION,
+        ),
+        (ReviewDecision.REJECTED, False, [], FlowRoute.FAIL_FLOW),
+    ],
+)
+def test_review_decisions_route_without_duplicate_booleans(
+    decision: ReviewDecision,
+    approved_for_blueprint: bool,
+    revision_requests: list[RevisionRequest],
+    expected: FlowRoute,
+) -> None:
+    review = LeadReview(
+        executive_summary="Deterministic review-routing fixture.",
+        decision=decision,
+        approved_for_blueprint=approved_for_blueprint,
+        revision_requests=revision_requests,
+    )
+
+    assert route_after_review(review) is expected
+
+
+def test_revision_decision_requires_a_target() -> None:
+    review = LeadReview(
+        executive_summary="Revision is requested without actionable targets.",
+        decision=ReviewDecision.REVISION_REQUIRED,
+        approved_for_blueprint=False,
+    )
+
+    with pytest.raises(ValueError, match="revision requests"):
+        route_after_review(review)
+
+
+def test_revision_limit_routes_to_failure() -> None:
+    state = BuildWiseFlowState(
+        revision_count=2,
+        lead_review=LeadReview(
+            executive_summary="Another requirements revision is needed.",
+            decision=ReviewDecision.REVISION_REQUIRED,
+            revision_requests=[
+                RevisionRequest(
+                    target=RevisionTarget.REQUIREMENTS,
+                    reason="Requirements remain inconsistent.",
+                )
+            ],
+        ),
+    )
+    flow = BuildWiseConsultingFlow(initial_state=state, settings=_settings())
+
+    assert flow.execute_targeted_revision() == FlowRoute.FAIL_FLOW.value
+
+
+def test_serialized_clarification_state_resumes_through_completion(
+    monkeypatch: Any,
+) -> None:
+    session_id = build_discovery_result().session_id
+    discovery, product = build_product_planning_inputs(session_id=session_id)
+    resuming_state = BuildWiseFlowState(
+        session_id=session_id,
+        intake_request=ProductIdeaRequest(
+            idea="A scheduling product for distributed teams across time zones."
+        ),
+        status=SessionStatus.RESUMING,
+        stage="clarification",
+        product_context=build_discovery_result(session_id=session_id).idea_context,
+        clarification_round=1,
+        clarification_answers=[
+            ClarificationAnswer(
+                question_id=product.product_definition.id,
+                answer="Small distributed software teams.",
+            )
+        ],
+    )
+    restored_state = BuildWiseFlowState.model_validate(resuming_state.model_dump(mode="json"))
+    solution = SolutionArchitecture.model_construct(
+        id=product.requirements.id,
+        session_id=session_id,
+        requirements_specification_id=product.requirements.id,
+    )
+    technical = TechnicalPlanningResult.model_construct(
+        session_id=session_id,
+        solution_architecture=solution,
+        ai_architecture=None,
+        security_architecture=None,
+        qa_evaluation=None,
+    )
+    review = LeadReview(
+        executive_summary="The resumed plan is ready.",
+        decision=ReviewDecision.APPROVED,
+        approved_for_blueprint=True,
+    )
+    monkeypatch.setattr(
+        flow_module,
+        "assemble_product_planning_result",
+        lambda *_args, **_kwargs: product,
+    )
+    monkeypatch.setattr(
+        flow_module,
+        "assemble_technical_planning_result",
+        lambda *_args, **_kwargs: technical,
+    )
+    flow = BuildWiseConsultingFlow(
+        initial_state=restored_state,
+        settings=_settings(),
+        blueprint_builder=_BlueprintBuilder(),
+        discovery_crew_factory=lambda **_: _FakeCrew(CrewOutput(pydantic=discovery)),
+        product_planning_crew_factory=lambda **_: _FakeCrew(CrewOutput()),
+        technical_planning_crew_factory=lambda **_: _FakeCrew(CrewOutput()),
+        lead_review_crew_factory=lambda **_: _FakeCrew(CrewOutput(pydantic=review)),
+    )
+
+    result = flow.kickoff()
+
+    assert isinstance(result, ProductBlueprint)
+    assert flow.state.status is SessionStatus.COMPLETED

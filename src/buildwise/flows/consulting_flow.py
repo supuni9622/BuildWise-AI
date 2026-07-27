@@ -8,6 +8,7 @@ from typing import Protocol, cast
 import structlog
 from crewai import Crew, CrewOutput
 from crewai.flow.flow import Flow, listen, or_, router, start
+from crewai.flow.persistence.base import FlowPersistence
 from pydantic import PrivateAttr
 
 from buildwise.agents.factory import AgentFactory
@@ -43,6 +44,7 @@ from buildwise.flows.routing import (
     FlowRoute,
     apply_specialist_execution_plan,
     route_after_discovery,
+    route_after_review,
     route_after_specialist_planning,
     route_after_specialists,
 )
@@ -121,9 +123,13 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
         product_planning_crew_factory: CrewFactory = create_product_planning_crew,
         technical_planning_crew_factory: CrewFactory = create_technical_planning_crew,
         lead_review_crew_factory: CrewFactory = create_lead_review_crew,
+        persistence: FlowPersistence | None = None,
     ) -> None:
         resolved_settings = settings or get_settings()
-        super().__init__(initial_state=initial_state or BuildWiseFlowState())
+        super().__init__(
+            initial_state=initial_state or BuildWiseFlowState(),
+            persistence=persistence,
+        )
         self._settings = resolved_settings
         self._agent_factory = agent_factory or AgentFactory(settings=resolved_settings)
         self._planner = planner or SpecialistPlanner()
@@ -310,16 +316,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
     @router(execute_lead_review)
     def route_review(self) -> str:
         review = self._require(self.state.lead_review, "lead_review")
-        if review.decision is ReviewDecision.REVISION_REQUIRED:
-            return FlowRoute.RUN_TARGETED_REVISION.value
-        if review.decision in {
-            ReviewDecision.APPROVED,
-            ReviewDecision.APPROVED_WITH_LIMITATIONS,
-        }:
-            if not review.approved_for_blueprint:
-                raise ValueError("An approved review must allow blueprint assembly.")
-            return FlowRoute.ASSEMBLE_BLUEPRINT.value
-        return FlowRoute.FAIL_FLOW.value
+        return route_after_review(review).value
 
     @router(FlowRoute.RUN_TARGETED_REVISION.value)
     def execute_targeted_revision(self) -> str:
