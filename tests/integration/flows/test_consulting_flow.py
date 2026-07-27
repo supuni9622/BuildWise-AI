@@ -31,7 +31,11 @@ from buildwise.flows.consulting_flow import BuildWiseConsultingFlow
 from buildwise.flows.routing import FlowRoute, route_after_review
 from buildwise.flows.state import BuildWiseFlowState
 from buildwise.persistence.flow_store import BuildWiseFlowStore
-from buildwise.persistence.models import ArtifactRecord, ConsultationRecord
+from buildwise.persistence.models import (
+    ArtifactRecord,
+    BlueprintReportMetadataRecord,
+    ConsultationRecord,
+)
 from fixtures.planning import build_discovery_result, build_product_planning_inputs
 
 
@@ -60,12 +64,13 @@ class _BlueprintBuilder:
         )
 
 
-def _settings() -> Settings:
+def _settings(**overrides: Any) -> Settings:
     return Settings(
         debug=False,
         crewai_tracing_enabled=False,
         crewai_verbose=False,
         openai_api_key=SecretStr("sk-test"),
+        **overrides,
     )
 
 
@@ -125,7 +130,7 @@ def test_mocked_consulting_flow_completes(
     engine = create_engine(f"sqlite:///{tmp_path / 'flow.db'}")
     flow = BuildWiseConsultingFlow(
         initial_state=state,
-        settings=_settings(),
+        settings=_settings(report_storage_path=tmp_path / "reports"),
         blueprint_builder=_BlueprintBuilder(),
         discovery_crew_factory=lambda **_: _FakeCrew(CrewOutput(pydantic=discovery)),
         product_planning_crew_factory=lambda **_: _FakeCrew(CrewOutput()),
@@ -144,6 +149,9 @@ def test_mocked_consulting_flow_completes(
     with Session(engine) as session:
         assert session.get(ConsultationRecord, str(state.session_id)) is not None
         artifact_types = set(session.scalars(select(ArtifactRecord.artifact_type)).all())
+        report = session.get(BlueprintReportMetadataRecord, (str(state.session_id), 1))
+        assert report is not None
+        assert report.lead_review_id == str(flow.state.review_artifact_id)
     assert artifact_types == {
         "blueprint",
         "discovery",
@@ -152,6 +160,7 @@ def test_mocked_consulting_flow_completes(
         "specialist_plan",
         "technical_planning",
     }
+    assert (tmp_path / "reports" / str(state.session_id) / "blueprint.md").is_file()
 
 
 def test_created_flow_requires_intake() -> None:
@@ -317,6 +326,7 @@ def test_revision_limit_routes_to_failure() -> None:
 
 def test_serialized_clarification_state_resumes_through_completion(
     monkeypatch: Any,
+    tmp_path: Path,
 ) -> None:
     session_id = build_discovery_result().session_id
     discovery, product = build_product_planning_inputs(session_id=session_id)
@@ -366,7 +376,7 @@ def test_serialized_clarification_state_resumes_through_completion(
     )
     flow = BuildWiseConsultingFlow(
         initial_state=restored_state,
-        settings=_settings(),
+        settings=_settings(report_storage_path=tmp_path / "reports"),
         blueprint_builder=_BlueprintBuilder(),
         discovery_crew_factory=lambda **_: _FakeCrew(CrewOutput(pydantic=discovery)),
         product_planning_crew_factory=lambda **_: _FakeCrew(CrewOutput()),

@@ -107,3 +107,22 @@ class UsageRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now
     )
+
+
+class BlueprintReportMetadataRecord(Base):
+    __tablename__ = "blueprint_reports"
+    __table_args__ = (
+        UniqueConstraint(
+            "consultation_id",
+            "blueprint_version",
+            name="uq_blueprint_report_consultation_version",
+        ),
+    )
+
+    consultation_id: Mapped[str] = mapped_column(
+        ForeignKey("consultations.id", ondelete="CASCADE"), primary_key=True
+    )
+    blueprint_version: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    s3_key: Mapped[str] = mapped_column(String(1024))
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    lead_review_id: Mapped[str] = mapped_column(String(36), index=True)

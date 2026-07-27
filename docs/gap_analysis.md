@@ -47,8 +47,9 @@ Actor → Frontend → FastAPI validation → BuildWise CrewAI Flow
 | revisions → rerun affected planning Crew | ✅ Built | `flows/revisions.py` deterministically maps Product Definition, Requirements, and Market & GTM to the Product Planning Crew, and Solution, AI, Security, and QA revisions to the Technical Planning Crew. Technical revisions rerun only the target plus selected downstream dependants (Solution → selected AI/Security/QA; AI → selected Security/QA; Security → selected QA; QA only). The Flow retains revision history and enforces `state.limits.maximum_specialist_revisions`; no revision-planning Agent is used |
 | Output validation | ✅ Built | `validation/output_validator.py::validate_output` performs the final cross-stage pass: it requires all blueprint inputs, verifies session ownership, reruns existing aggregate/ownership/execution-graph validators, checks selected specialist outputs against the execution plan, validates the Lead Review decision, and rejects approval while a blocking revision remains |
 | Deterministic Blueprint Generator | ✅ Built | `reporting/assembler.py` deterministically maps the approved aggregates and usage summary into all 17 `ProductBlueprint` sections; `reporting/markdown_renderer.py` renders and writes `blueprint.md` without an LLM call |
+| S3 report storage | ✅ Built | After blueprint generation, `reporting/storage.py` writes Markdown to `consultations/{consultation_id}/blueprints/v1/blueprint.md` in S3, with optional `blueprint.json`. Local development defaults to `data/reports/{consultation_id}/blueprint.md`. PostgreSQL stores the version-1 key, generation time, and Lead Review ID in `blueprint_reports` |
 | Final Report / Frontend | ✅ Built | The frontend renders the completed typed blueprint as a navigable 17-section document, surfaces open questions separately from limitations, and downloads `generated_markdown` as `blueprint.md` |
-| Persistence (implicit, cross-cutting) | ✅ Built | `persistence/models.py` defines the five-table MVP schema; `repositories.py` handles consultation snapshots, versioned artifacts, clarification rounds, revisions, and usage; `flow_store.py::BuildWiseFlowStore` is the native CrewAI adapter. The full Flow persistence integration is tested. PostgreSQL is running through Docker Compose and the active local configuration connects on `localhost:5433`; containers use `postgres:5432` internally |
+| Persistence (implicit, cross-cutting) | ✅ Built | `persistence/models.py` defines the original five MVP tables plus `blueprint_reports`; `repositories.py` handles consultation snapshots, versioned artifacts, clarification rounds, revisions, usage, and report-location metadata; `flow_store.py::BuildWiseFlowStore` is the native CrewAI adapter. PostgreSQL is running through Docker Compose and the active local configuration connects on `localhost:5433`; containers use `postgres:5432` internally |
 
 ---
 
@@ -148,6 +149,19 @@ open questions, limitations, implementation phases, and usage, and renders
 the complete Markdown deterministically. `MarkdownRenderer` can write that
 content to `blueprint.md`. The live Flow uses this assembler by default; no
 LLM call is involved.
+
+#### S3 report storage — `src/buildwise/reporting/storage.py`
+
+The Flow stores the generated Markdown before marking the consultation
+complete. S3 uses the fixed MVP key
+`consultations/{consultation_id}/blueprints/v1/blueprint.md`; structured JSON
+at the matching `blueprint.json` key is configurable. Local and test
+environments can use the filesystem backend at
+`data/reports/{consultation_id}/blueprint.md` without AWS credentials.
+`blueprint_reports` retains `consultation_id`, `blueprint_version` (fixed at
+`1` for the MVP), `s3_key`, `generated_at`, and `lead_review_id`. Comparison,
+replacement, and multi-version update workflows remain intentionally out of
+scope.
 
 ### 6. Complete usage and runtime-budget accounting
 Extend the new Flow-owned token aggregator with provider/model attribution,

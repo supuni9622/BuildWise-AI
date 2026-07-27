@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from buildwise.persistence.flow_store import BuildWiseFlowStore
 from buildwise.persistence.models import (
     ArtifactRecord,
+    BlueprintReportMetadataRecord,
     ClarificationRoundRecord,
     ConsultationRecord,
     RevisionRecord,
@@ -37,6 +38,7 @@ def _state(consultation_id: str) -> dict[str, object]:
         "technical_planning_result": None,
         "lead_review": None,
         "product_blueprint": None,
+        "blueprint_report": None,
         "clarification_round": 1,
         "clarification_question_set": {
             "id": str(uuid4()),
@@ -71,11 +73,37 @@ def test_flow_store_creates_exact_mvp_tables(tmp_path: Path) -> None:
 
     assert set(inspect(engine).get_table_names()) == {
         "artifacts",
+        "blueprint_reports",
         "clarification_rounds",
         "consultations",
         "revisions",
         "usage",
     }
+
+
+def test_flow_store_saves_blueprint_report_metadata(tmp_path: Path) -> None:
+    engine = create_engine(f"sqlite:///{tmp_path / 'buildwise.db'}")
+    store = BuildWiseFlowStore(engine)
+    consultation_id = str(uuid4())
+    lead_review_id = str(uuid4())
+    state = _state(consultation_id)
+    state["blueprint_report"] = {
+        "consultation_id": consultation_id,
+        "blueprint_version": 1,
+        "s3_key": f"consultations/{consultation_id}/blueprints/v1/blueprint.md",
+        "generated_at": "2026-07-27T12:00:00+00:00",
+        "lead_review_id": lead_review_id,
+        "storage_backend": "s3",
+    }
+
+    store.save_state("report-flow", "build_blueprint", state)
+
+    with Session(engine) as session:
+        record = session.get(BlueprintReportMetadataRecord, (consultation_id, 1))
+        assert record is not None
+        assert record.blueprint_version == 1
+        assert record.lead_review_id == lead_review_id
+        assert record.s3_key.endswith("/blueprints/v1/blueprint.md")
 
 
 def test_flow_store_saves_and_loads_consultation_snapshot(tmp_path: Path) -> None:

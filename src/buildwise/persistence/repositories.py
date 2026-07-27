@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from buildwise.domain.common import utc_now
 from buildwise.persistence.models import (
     ArtifactRecord,
+    BlueprintReportMetadataRecord,
     ClarificationRoundRecord,
     ConsultationRecord,
     RevisionRecord,
@@ -214,5 +215,37 @@ class UsageRepository:
         else:
             record.usage_json = dict(usage)
             record.updated_at = utc_now()
+        self._session.flush()
+        return record
+
+
+class BlueprintReportRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def save(
+        self,
+        *,
+        consultation_id: str,
+        blueprint_version: int,
+        s3_key: str,
+        generated_at: datetime,
+        lead_review_id: str,
+    ) -> BlueprintReportMetadataRecord:
+        identity = (consultation_id, blueprint_version)
+        record = self._session.get(BlueprintReportMetadataRecord, identity)
+        if record is None:
+            record = BlueprintReportMetadataRecord(
+                consultation_id=consultation_id,
+                blueprint_version=blueprint_version,
+                s3_key=s3_key,
+                generated_at=generated_at,
+                lead_review_id=lead_review_id,
+            )
+            self._session.add(record)
+        else:
+            record.s3_key = s3_key
+            record.generated_at = generated_at
+            record.lead_review_id = lead_review_id
         self._session.flush()
         return record

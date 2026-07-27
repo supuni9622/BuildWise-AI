@@ -36,6 +36,7 @@ from buildwise.domain.intake import (
 )
 from buildwise.domain.product import ProductDefinition
 from buildwise.domain.product_planning import ProductPlanningResult
+from buildwise.domain.reporting import BlueprintReportRecord
 from buildwise.domain.requirements import RequirementsSpecification
 from buildwise.domain.review import LeadReview, RevisionRequest
 from buildwise.domain.session import SessionError
@@ -463,6 +464,7 @@ class BuildWiseFlowState(BuildWiseModel):
     technical_planning_result: TechnicalPlanningResult | None = None
     lead_review: LeadReview | None = None
     product_blueprint: ProductBlueprint | None = None
+    blueprint_report: BlueprintReportRecord | None = None
     revision_history: list[RevisionRequest] = Field(default_factory=list)
 
     specialist_executions: list[SpecialistExecutionState] = Field(

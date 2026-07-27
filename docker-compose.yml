@@ -34,6 +34,17 @@ services:
         postgresql+psycopg://${POSTGRES_USER:-buildwise}:${POSTGRES_PASSWORD:-buildwise}@postgres:5432/${POSTGRES_DB:-buildwise}
 
       # =======================================================================
+      # Blueprint report storage
+      # =======================================================================
+
+      REPORT_STORAGE_BACKEND: ${REPORT_STORAGE_BACKEND:-filesystem}
+      REPORT_STORAGE_PATH: ${REPORT_STORAGE_PATH:-data/reports}
+      STORE_BLUEPRINT_JSON: ${STORE_BLUEPRINT_JSON:-false}
+      S3_REPORT_BUCKET: ${S3_REPORT_BUCKET:-}
+      AWS_REGION: ${AWS_REGION:-}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+
+      # =======================================================================
       # Provider credentials
       # =======================================================================
 

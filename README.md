@@ -139,6 +139,69 @@ Serper is optional for the overall workflow. Without it, BuildWise continues
 with an explicit market-research evidence gap instead of using live web
 search.
 
+## Blueprint report storage
+
+Generated blueprint Markdown is stored after blueprint assembly and before the
+consultation is marked complete.
+
+Local development uses the filesystem backend by default and requires no AWS
+configuration:
+
+```env
+REPORT_STORAGE_BACKEND=filesystem
+REPORT_STORAGE_PATH=data/reports
+STORE_BLUEPRINT_JSON=false
+```
+
+The generated report is written to:
+
+```text
+data/reports/{consultation_id}/blueprint.md
+```
+
+To use S3, create the bucket first and configure:
+
+```env
+REPORT_STORAGE_BACKEND=s3
+S3_REPORT_BUCKET=your-buildwise-reports-bucket
+AWS_REGION=ap-south-1
+STORE_BLUEPRINT_JSON=false
+```
+
+Provide credentials through the standard AWS credential chain. Local
+credentials can be supplied through environment variables:
+
+```env
+AWS_ACCESS_KEY_ID=your-access-key-id
+AWS_SECRET_ACCESS_KEY=your-secret-access-key
+# Required only for temporary credentials:
+AWS_SESSION_TOKEN=your-session-token
+```
+
+For deployed environments, prefer an IAM role or workload identity instead of
+long-lived access keys. The application needs `s3:PutObject` for:
+
+```text
+arn:aws:s3:::your-buildwise-reports-bucket/consultations/*
+```
+
+S3 reports use the fixed MVP key:
+
+```text
+consultations/{consultation_id}/blueprints/v1/blueprint.md
+```
+
+Set `STORE_BLUEPRINT_JSON=true` to also store `blueprint.json` under the same
+versioned prefix. For MinIO, LocalStack, or another S3-compatible service, set
+`S3_ENDPOINT_URL` to its endpoint.
+
+PostgreSQL stores the report location and version-1 metadata in the
+`blueprint_reports` table. The existing database initialization creates this
+table automatically.
+
+When using the filesystem backend in Docker, mount `data/reports` as a volume
+if reports must survive container replacement.
+
 ## Frontend
 
 Keep the backend running on port `8080`. In a second terminal, run:

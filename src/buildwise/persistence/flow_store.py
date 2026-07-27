@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from buildwise.persistence.models import Base
 from buildwise.persistence.repositories import (
     ArtifactRepository,
+    BlueprintReportRepository,
     ClarificationRoundRepository,
     ConsultationRepository,
     RevisionRepository,
@@ -75,6 +76,7 @@ class BuildWiseFlowStore(FlowPersistence):
             self._save_artifacts(session, consultation_id, state)
             self._save_clarification(session, consultation_id, state)
             self._save_revisions(session, consultation_id, state)
+            self._save_blueprint_report(session, consultation_id, state)
             UsageRepository(session).save(
                 consultation_id=consultation_id,
                 usage=self._mapping(state.get("usage")),
@@ -227,3 +229,23 @@ class BuildWiseFlowStore(FlowPersistence):
                 round_number=round_number,
                 status="requested",
             )
+
+    def _save_blueprint_report(
+        self,
+        session: Session,
+        consultation_id: str,
+        state: dict[str, Any],
+    ) -> None:
+        report = state.get("blueprint_report")
+        if not isinstance(report, dict):
+            return
+        generated_at = self._datetime(report.get("generated_at"))
+        if generated_at is None:
+            raise ValueError("Blueprint report metadata requires generated_at.")
+        BlueprintReportRepository(session).save(
+            consultation_id=consultation_id,
+            blueprint_version=int(report.get("blueprint_version", 1)),
+            s3_key=str(report.get("s3_key", "")),
+            generated_at=generated_at,
+            lead_review_id=str(report.get("lead_review_id", "")),
+        )

@@ -60,6 +60,10 @@ from buildwise.flows.routing import (
 from buildwise.flows.state import BuildWiseFlowState
 from buildwise.planning.planner import SpecialistPlanner
 from buildwise.reporting.assembler import BlueprintAssembler
+from buildwise.reporting.storage import (
+    BlueprintReportStorage,
+    create_blueprint_report_storage,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -111,6 +115,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
     _agent_factory: AgentFactory = PrivateAttr()
     _planner: SpecialistPlanner = PrivateAttr()
     _blueprint_builder: BlueprintBuilder = PrivateAttr()
+    _blueprint_report_storage: BlueprintReportStorage = PrivateAttr()
     _discovery_crew_factory: CrewFactory = PrivateAttr()
     _product_planning_crew_factory: CrewFactory = PrivateAttr()
     _technical_planning_crew_factory: CrewFactory = PrivateAttr()
@@ -124,6 +129,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
         agent_factory: AgentFactory | None = None,
         planner: SpecialistPlanner | None = None,
         blueprint_builder: BlueprintBuilder | None = None,
+        blueprint_report_storage: BlueprintReportStorage | None = None,
         discovery_crew_factory: CrewFactory = create_discovery_crew,
         product_planning_crew_factory: CrewFactory = create_product_planning_crew,
         technical_planning_crew_factory: CrewFactory = create_technical_planning_crew,
@@ -140,6 +146,9 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
         self._agent_factory = agent_factory or AgentFactory(settings=resolved_settings)
         self._planner = planner or SpecialistPlanner()
         self._blueprint_builder = blueprint_builder or BlueprintAssembler()
+        self._blueprint_report_storage = (
+            blueprint_report_storage or create_blueprint_report_storage(resolved_settings)
+        )
         self._discovery_crew_factory = discovery_crew_factory
         self._product_planning_crew_factory = product_planning_crew_factory
         self._technical_planning_crew_factory = technical_planning_crew_factory
@@ -423,6 +432,11 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
                     )
                 )
         review_id = self.state.review_artifact_id or generate_uuid()
+        self.state.blueprint_report = self._blueprint_report_storage.store(
+            consultation_id=self.state.session_id,
+            blueprint=blueprint,
+            lead_review_id=review_id,
+        )
         blueprint_id = generate_uuid()
         self.state.mark_completed(
             blueprint_artifact_id=blueprint_id,

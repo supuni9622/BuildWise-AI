@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator
@@ -24,6 +25,13 @@ class Settings(BaseSettings):
     port: int = Field(default=8000, ge=1, le=65535)
 
     database_url: str = "sqlite:///./data/buildwise.db"
+
+    report_storage_backend: Literal["filesystem", "s3"] = "filesystem"
+    report_storage_path: Path = Path("data/reports")
+    store_blueprint_json: bool = False
+    s3_report_bucket: str | None = None
+    aws_region: str | None = None
+    s3_endpoint_url: str | None = None
 
     openai_api_key: SecretStr | None = None
     primary_agent_model: str = "openai/gpt-5-mini"
