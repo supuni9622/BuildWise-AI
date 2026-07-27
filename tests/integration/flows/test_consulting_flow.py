@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
 from crewai import CrewOutput
 from pydantic import SecretStr
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session
 
 import buildwise.flows.consulting_flow as flow_module
 from buildwise.config.settings import Settings
 from buildwise.domain.architecture import SolutionArchitecture
 from buildwise.domain.blueprint import ProductBlueprint
+from buildwise.domain.blueprint import UsageSummary as BlueprintUsageSummary
 from buildwise.domain.discovery import (
     ClarificationQuestion,
     ClarificationQuestionSet,
@@ -26,6 +30,8 @@ from buildwise.domain.technical_planning import TechnicalPlanningResult
 from buildwise.flows.consulting_flow import BuildWiseConsultingFlow
 from buildwise.flows.routing import FlowRoute, route_after_review
 from buildwise.flows.state import BuildWiseFlowState
+from buildwise.persistence.flow_store import BuildWiseFlowStore
+from buildwise.persistence.models import ArtifactRecord, ConsultationRecord
 from fixtures.planning import build_discovery_result, build_product_planning_inputs
 
 
@@ -48,7 +54,7 @@ class _BlueprintBuilder:
             risks=[],
             recommendations=[],
             limitations=[],
-            usage_summary={},
+            usage_summary=BlueprintUsageSummary(),
             generated_markdown="# TeamSync",
             version="1.0",
         )
@@ -63,7 +69,10 @@ def _settings() -> Settings:
     )
 
 
-def test_mocked_consulting_flow_completes(monkeypatch: Any) -> None:
+def test_mocked_consulting_flow_completes(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
     state = BuildWiseFlowState(
         intake_request=ProductIdeaRequest(
             idea="A scheduling product for distributed teams across time zones."
@@ -99,6 +108,7 @@ def test_mocked_consulting_flow_completes(monkeypatch: Any) -> None:
         lambda *_args, **_kwargs: technical,
     )
 
+    engine = create_engine(f"sqlite:///{tmp_path / 'flow.db'}")
     flow = BuildWiseConsultingFlow(
         initial_state=state,
         settings=_settings(),
@@ -107,6 +117,7 @@ def test_mocked_consulting_flow_completes(monkeypatch: Any) -> None:
         product_planning_crew_factory=lambda **_: _FakeCrew(CrewOutput()),
         technical_planning_crew_factory=lambda **_: _FakeCrew(CrewOutput()),
         lead_review_crew_factory=lambda **_: _FakeCrew(CrewOutput(pydantic=review)),
+        persistence=BuildWiseFlowStore(engine),
     )
 
     result = flow.kickoff()
@@ -116,6 +127,17 @@ def test_mocked_consulting_flow_completes(monkeypatch: Any) -> None:
     assert flow.state.product_planning_result is product
     assert flow.state.technical_planning_result is technical
     assert flow.state.lead_review is review
+    with Session(engine) as session:
+        assert session.get(ConsultationRecord, str(state.session_id)) is not None
+        artifact_types = set(session.scalars(select(ArtifactRecord.artifact_type)).all())
+    assert artifact_types == {
+        "blueprint",
+        "discovery",
+        "lead_review",
+        "product_planning",
+        "specialist_plan",
+        "technical_planning",
+    }
 
 
 def test_created_flow_requires_intake() -> None:
@@ -210,7 +232,7 @@ def test_discovery_fixture_matches_flow_session() -> None:
 
 
 @pytest.mark.parametrize(
-    ("decision", "approved", "revision_requests", "expected"),
+    ("decision", "approved_for_blueprint", "revision_requests", "expected"),
     [
         (ReviewDecision.APPROVED, True, [], FlowRoute.ASSEMBLE_BLUEPRINT),
         (

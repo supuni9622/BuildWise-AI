@@ -1,6 +1,7 @@
 from functools import lru_cache
 
 from sqlalchemy import Engine, create_engine, text
+from sqlalchemy.orm import Session, sessionmaker
 
 from buildwise.config.settings import get_settings
 
@@ -25,3 +26,18 @@ def check_database_connection() -> bool:
         return True
     except Exception:
         return False
+
+
+@lru_cache
+def get_session_factory() -> sessionmaker[Session]:
+    """Return the shared SQLAlchemy session factory."""
+
+    return sessionmaker(bind=get_engine(), expire_on_commit=False)
+
+
+def initialize_database() -> None:
+    """Create the minimal BuildWise persistence schema."""
+
+    from buildwise.persistence.models import Base
+
+    Base.metadata.create_all(get_engine())

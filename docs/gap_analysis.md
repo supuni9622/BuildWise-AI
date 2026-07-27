@@ -31,7 +31,7 @@ Actor → Frontend → FastAPI validation → BuildWise CrewAI Flow
 | Discovery Crew | ✅ Built | `crews/discovery.py` + `tasks/discovery.py` |
 | DiscoveryResult | ✅ Built | `domain/discovery.py` |
 | Completeness Router | ✅ Built | `BuildWiseConsultingFlow.route_discovery()` delegates to `route_after_discovery(state)` and emits live clarification, continuation, or failure routes |
-| Clarification loop (pause/frontend/answers/resume) | 🟡 Partial | The Flow enters `AWAITING_USER_INPUT`, accepts structured `ClarificationAnswer` values, and routes a serialized/reconstructed `RESUMING` state through Discovery to completion. Native `FlowPersistence` is injectable; a configured adapter and the frontend/API resume endpoint remain missing |
+| Clarification loop (pause/frontend/answers/resume) | 🟡 Partial | The Flow enters `AWAITING_USER_INPUT`, accepts structured `ClarificationAnswer` values, and routes a persisted/reconstructed `RESUMING` state through Discovery to completion. `BuildWiseFlowStore` provides the native persistence adapter; the frontend/API resume endpoint remains missing |
 | Early Market Router | ✅ Built | `run_product_planning()` calls `SpecialistPlanner.should_include_early_market_context(...)` before constructing the Product Planning Crew |
 | Product Planning Crew | ✅ Built | `crews/product_planning.py`, incl. `assemble_product_planning_result` → `ProductPlanningResult` |
 | Deterministic Specialist Planner | ✅ Built | `src/buildwise/planning/` implements the pure-Python planner; `BuildWiseConsultingFlow.plan_specialists()` now calls it, stores the `SpecialistExecutionPlan`, registers selected executions, and passes that exact plan to the Technical Planning Crew |
@@ -43,7 +43,7 @@ Actor → Frontend → FastAPI validation → BuildWise CrewAI Flow
 | Output validation | 🟡 Partial | The Flow rejects missing/wrong structured Discovery and Lead Review outputs, aggregate assemblers validate Product/Technical Planning, and state setters enforce session ownership and specialist selection. The dedicated `validation/` package and a unified post-Crew validation service remain missing |
 | Deterministic Blueprint Generator | 🔴 Missing | `reporting/__init__.py` is empty. `ProductBlueprint`/`BlueprintSection` models exist (`domain/blueprint.py`) with no assembler |
 | Final Report / Frontend | 🔴 Missing | Depends on the blueprint generator above |
-| Persistence (implicit, cross-cutting) | 🟡 Partial | `BuildWiseConsultingFlow` accepts native `FlowPersistence`, but `persistence/database.py` remains a bare engine + connectivity check—there is no configured adapter, ORM schema, or repository for sessions, artifacts, and revision history |
+| Persistence (implicit, cross-cutting) | ✅ Built | `persistence/models.py` defines the five-table MVP schema; `repositories.py` handles consultation snapshots, versioned artifacts, clarification rounds, revisions, and usage; `flow_store.py::BuildWiseFlowStore` is the native CrewAI adapter. The full Flow persistence integration is tested |
 
 ---
 
@@ -85,11 +85,14 @@ Review, and revision history. Review routing consumes `LeadReview.decision`
 directly; the obsolete duplicate-boolean contract has been removed. The Flow
 constructor also accepts CrewAI's native `FlowPersistence` boundary.
 
-### 3. Persistence schema — `src/buildwise/persistence/`
-SQLAlchemy ORM models (or a document-style JSON-column approach) for
-`ConsultingSession`, the serialized `BuildWiseFlowState`, and revision
-history, plus repository functions. Every PRD assumes the Flow "persists
-validated artifacts" — there's currently nowhere to put them.
+### 3. ✅ Done — Minimal persistence — `src/buildwise/persistence/`
+Implemented the five MVP tables: `consultations`, `artifacts`,
+`clarification_rounds`, `revisions`, and `usage`. The SQLAlchemy repositories
+upsert mutable session data, preserve immutable artifact versions, and avoid
+duplicate revision records. `BuildWiseFlowStore` implements CrewAI's native
+`FlowPersistence`, creates the schema, saves after Flow methods, and restores
+state by CrewAI Flow UUID. No user, organization, permission, authentication,
+API-key, or tenant-isolation tables were added.
 
 ### 4. 🟡 Partial — Output validation — `src/buildwise/validation/`
 The Flow-side check described in every Crew PRD: reject a "successful"
@@ -127,11 +130,11 @@ into the completed Flow and the persistence layer in step 3.
   (`SpecialistExecutionPlan`); `routing.py` held a second, buggy
   implementation of the selection *rules* targeting that same model. It has
   been removed in favor of `src/buildwise/planning/` (see step 1 above).
-- Tests now include 62 planner tests plus 11 mocked Consulting Flow
-  integration tests. Flow coverage includes the happy path, intake rejection,
+- Tests now include 62 planner tests, 11 mocked Consulting Flow tests, and
+  four persistence tests. Flow coverage includes the happy path, intake rejection,
   typed clarification, serialized-state resume through completion, all four
   review decisions, malformed revision decisions, revision-limit exhaustion,
-  and session ownership. The full suite contains 73 passing tests with no
+  and session ownership. The full suite contains 77 passing tests with no
   live LLM calls.
 - The planner's budget policy is intentionally coarse per the PRD (no exact
   token/dollar estimation): it only reads
@@ -159,7 +162,7 @@ Output shape. Same legend: ✅ Built · 🟡 Partial · 🔴 Missing.
 |---|---|---|---|
 | FR1 | Accept vague ideas | 🟡 Partial | `domain/intake.py` models (`ProductIdeaRequest`, `ValidatedProductIdea`) and the Discovery Crew (`crews/discovery.py`) can process one, but there is no live endpoint to submit one — `api/v1/router.py` only exposes the API root |
 | FR2 | Generate dynamic questions | ✅ Built | Discovery produces `ClarificationQuestionSet` and the Flow exposes it as the typed pause result |
-| FR3 | Pause and resume sessions | 🟡 Partial | The live Flow pauses in `AWAITING_USER_INPUT`, accepts structured answers, and a serialized/reconstructed state resumes through Discovery to completion. Native persistence is injectable; the configured adapter and external endpoint remain missing |
+| FR3 | Pause and resume sessions | 🟡 Partial | The live Flow pauses in `AWAITING_USER_INPUT`, persists typed state through `BuildWiseFlowStore`, accepts structured answers, and resumes through Discovery to completion. Only the external API/frontend resume endpoint remains missing |
 | FR4 | Select specialists dynamically | ✅ Built | The live Flow calls `SpecialistPlanner.create_execution_plan(...)`, stores its plan, and uses it to construct Technical Planning |
 | FR5 | Generate product blueprint | 🔴 Missing | `ProductBlueprint`/`BlueprintSection` models exist (`domain/blueprint.py`); `reporting/__init__.py` is an empty stub — no assembler produces one |
 | FR6 | Support markdown export | 🔴 Missing | `ProductBlueprint.generated_markdown` is a required field in the model, but nothing populates it since no generator exists |
@@ -197,7 +200,7 @@ Output shape. Same legend: ✅ Built · 🟡 Partial · 🔴 Missing.
 |---|---|---|
 | Flows | ✅ Built | `BuildWiseConsultingFlow` is the live typed orchestrator and is covered by mocked end-to-end tests |
 | Crews | ✅ Built | Four real Crews: `crews/discovery.py`, `crews/product_planning.py`, `crews/technical_planning.py`, `crews/lead_review.py` |
-| Human Feedback | 🟡 Partial | Structured clarification pause/resume is complete at the Flow boundary without manual JSON parsing, including serialized-state resume coverage. Native persistence is injectable, but no configured persistence/input provider or API/frontend bridge exists yet |
+| Human Feedback | 🟡 Partial | Structured clarification pause/resume and native state persistence are complete without manual JSON parsing. No API/frontend bridge or interactive input provider exists yet |
 | Structured Outputs | ✅ Built | `TaskOutput.pydantic` enforced pervasively via `tasks/guardrails.py::require_pydantic_output` and friends |
 | Tool Usage | ✅ Built | `tools/registry.py` wraps official CrewAI tools (`SerperDevTool`, `ScrapeWebsiteTool`, `GithubSearchTool`) |
 | Parallel Execution | 🔴 Missing | The Flow currently executes its Crews sequentially; no Crew branches run concurrently |
@@ -300,7 +303,7 @@ further alignment work.
 | CI (GitHub Actions: Ruff, mypy, pytest, coverage, startup smoke test) | 🔴 Missing | No `.github/workflows/` directory exists at all — zero automated CI, despite both architecture docs treating it as a required MVP control (`crewai_runtime_architecture.md` §2.8, `full_architecture_flow.md` §16–17) |
 | Docker/security CI workflow (image build, container smoke test, dependency audit, secret scanning, image scanning) | 🔴 Missing | Same as above — the Docker image itself is ready to be built by CI, but nothing builds or scans it automatically |
 | `GET /metrics/summary` endpoint (`full_architecture_flow.md` §6) | 🔴 Missing | Only `/health` and `/ready` exist in `api/router.py`; no metrics-summary endpoint |
-| PostgreSQL vs. SQLite as system of record | 🟡 Doc conflict, impl. reasonable | `crewai_runtime_architecture.md` §4.5/§3 treats PostgreSQL as the only system of record; `full_architecture_flow.md` §15 explicitly allows SQLite for local dev with Postgres for hosted deployment. Current `Settings.database_url` defaults to SQLite locally while `docker-compose.yml` wires Postgres for the containerized path — matches the *second* document, conflicts with the first's stricter wording. No ORM models exist yet either way (tracked above under Persistence) |
+| PostgreSQL vs. SQLite as system of record | 🟡 Doc conflict, impl. reasonable | `crewai_runtime_architecture.md` §4.5/§3 treats PostgreSQL as the only system of record; `full_architecture_flow.md` §15 allows SQLite locally and Postgres when hosted. The portable SQLAlchemy MVP schema now supports both; `Settings.database_url` defaults to SQLite locally while `docker-compose.yml` wires Postgres |
 | CrewAI tracing wired to Flow/Crew/agent/task/tool/LLM execution | 🟡 Partial | A real Flow/Crew execution path and stage-level structlog events now exist, but `Settings.crewai_tracing_enabled` is not explicitly passed into the Flow and no trace records are persisted per consulting session |
 
 ---

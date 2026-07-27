@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import Field, field_validator, model_validator
 
 from buildwise.domain.architecture import SolutionArchitecture
+from buildwise.domain.blueprint import ProductBlueprint
 from buildwise.domain.common import (
     ArtifactId,
     BuildWiseModel,
@@ -461,6 +462,7 @@ class BuildWiseFlowState(BuildWiseModel):
     specialist_execution_plan: SpecialistExecutionPlan | None = None
     technical_planning_result: TechnicalPlanningResult | None = None
     lead_review: LeadReview | None = None
+    product_blueprint: ProductBlueprint | None = None
     revision_history: list[RevisionRequest] = Field(default_factory=list)
 
     specialist_executions: list[SpecialistExecutionState] = Field(

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 import structlog
 from crewai import Crew, CrewOutput
 from crewai.flow.flow import Flow, listen, or_, router, start
+from crewai.flow.persistence import persist
 from crewai.flow.persistence.base import FlowPersistence
-from pydantic import PrivateAttr
+from pydantic import BaseModel, PrivateAttr
 
 from buildwise.agents.factory import AgentFactory
 from buildwise.config.settings import Settings, get_settings
@@ -68,6 +69,27 @@ _TECHNICAL_REVISION_TARGETS = {
 }
 
 
+class _NullFlowPersistence(FlowPersistence):
+    """Enable persistence hooks while making persistence opt-in per Flow instance."""
+
+    persistence_type: str = "_NullFlowPersistence"
+
+    def init_db(self) -> None:
+        pass
+
+    def save_state(
+        self,
+        flow_uuid: str,
+        method_name: str,
+        state_data: dict[str, Any] | BaseModel,
+    ) -> None:
+        del flow_uuid, method_name, state_data
+
+    def load_state(self, flow_uuid: str) -> dict[str, Any] | None:
+        del flow_uuid
+        return None
+
+
 class BlueprintBuilder(Protocol):
     """Boundary for the out-of-scope deterministic blueprint renderer."""
 
@@ -99,6 +121,7 @@ class MissingBlueprintBuilder:
         raise RuntimeError("A BlueprintBuilder must be supplied to complete the consulting Flow.")
 
 
+@persist(_NullFlowPersistence())
 class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
     """Native CrewAI Flow connecting BuildWise's four business Crews."""
 
@@ -369,6 +392,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
             ),
             lead_review=self._require(self.state.lead_review, "lead_review"),
         )
+        self.state.product_blueprint = blueprint
         review = self._require(self.state.lead_review, "lead_review")
         if review.decision is ReviewDecision.APPROVED_WITH_LIMITATIONS:
             for index, limitation in enumerate(review.limitations, start=1):
