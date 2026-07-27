@@ -251,23 +251,14 @@ docker run -p 8000:8000 buildwise-ai
 ---
 Enable CrewAI tracing
 
-The .env.example already includes:
+The `.env.example` includes:
 ```
 CREWAI_TRACING_ENABLED=true
 ```
 
-You can also configure tracing through the CrewAI CLI:
-```bash
-uv run crewai traces enable
-```
-Check status:
-```bash
-uv run crewai traces status
-```
-Disable when required:
-```bash
-uv run crewai traces disable
-```
+BuildWise passes this value directly to its native CrewAI Flow and Crews.
+Set it to `false` to disable tracing. Because the application setting is an
+explicit runtime override, CrewAI CLI consent settings do not override it.
 
 ---
 Run quality checks

@@ -134,6 +134,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
         super().__init__(
             initial_state=initial_state or BuildWiseFlowState(),
             persistence=persistence,
+            tracing=resolved_settings.crewai_tracing_enabled,
         )
         self._settings = resolved_settings
         self._agent_factory = agent_factory or AgentFactory(settings=resolved_settings)

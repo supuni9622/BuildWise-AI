@@ -69,6 +69,20 @@ def _settings() -> Settings:
     )
 
 
+def test_consulting_flow_uses_native_crewai_tracing_setting() -> None:
+    enabled = BuildWiseConsultingFlow(
+        initial_state=BuildWiseFlowState(),
+        settings=Settings(crewai_tracing_enabled=True),
+    )
+    disabled = BuildWiseConsultingFlow(
+        initial_state=BuildWiseFlowState(),
+        settings=Settings(crewai_tracing_enabled=False),
+    )
+
+    assert enabled.tracing is True
+    assert disabled.tracing is False
+
+
 def test_mocked_consulting_flow_completes(
     monkeypatch: Any,
     tmp_path: Path,

@@ -21,7 +21,10 @@ from fixtures.planning import build_product_planning_inputs, build_sensitive_dat
 def _offline_settings() -> Settings:
     """Build Settings with a fake OpenAI key so Agent construction succeeds offline."""
 
-    return Settings(openai_api_key=SecretStr("sk-test-not-a-real-key"))
+    return Settings(
+        openai_api_key=SecretStr("sk-test-not-a-real-key"),
+        crewai_tracing_enabled=False,
+    )
 
 
 def test_technical_planning_crew_matches_specialist_plan() -> None:
@@ -59,6 +62,7 @@ def test_technical_planning_crew_matches_specialist_plan() -> None:
 
     assert len(crew.tasks) == len(selected_specialists)
     assert len(crew.agents) == len(selected_specialists)
+    assert crew.tracing is False
 
 
 def test_technical_planning_crew_excludes_unselected_specialists() -> None:

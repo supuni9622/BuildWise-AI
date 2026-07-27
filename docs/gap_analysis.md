@@ -222,7 +222,7 @@ Output shape. Same legend: ✅ Built · 🟡 Partial · 🔴 Missing.
 | FR4 | Select specialists dynamically | ✅ Built | The live Flow calls `SpecialistPlanner.create_execution_plan(...)`, stores its plan, and uses it to construct Technical Planning |
 | FR5 | Generate product blueprint | ✅ Built | `reporting/assembler.py::BlueprintAssembler` produces the typed blueprint from the approved stage aggregates and is the Flow's default builder |
 | FR6 | Support markdown export | ✅ Built | `reporting/markdown_renderer.py` populates `generated_markdown` and writes a deterministic `blueprint.md` |
-| FR7 | Provide execution tracing | 🟡 Partial | HTTP request tracing and a live CrewAI Flow execution path exist, with stage-level structlog events. Explicit CrewAI trace configuration and per-session trace persistence remain missing |
+| FR7 | Provide execution tracing | ✅ Built | Native CrewAI tracing is explicitly configured on the live Flow and every Crew through `CREWAI_TRACING_ENABLED`; CrewAI owns trace collection and storage |
 
 ## Non-Functional Requirements
 
@@ -259,7 +259,7 @@ Output shape. Same legend: ✅ Built · 🟡 Partial · 🔴 Missing.
 | Structured Outputs | ✅ Built | `TaskOutput.pydantic` enforced pervasively via `tasks/guardrails.py::require_pydantic_output` and friends |
 | Tool Usage | ✅ Built | `tools/registry.py` wraps official CrewAI tools (`SerperDevTool`, `ScrapeWebsiteTool`, `GithubSearchTool`) |
 | Parallel Execution | 🔴 Missing | The Flow currently executes its Crews sequentially; no Crew branches run concurrently |
-| Tracing | 🟡 Partial | HTTP request tracing, a real CrewAI execution path, and stage-level Flow logs exist; explicit CrewAI trace wiring and persistence remain missing |
+| Tracing | ✅ Built | Native CrewAI tracing is explicitly configured on the live Flow and every Crew through `CREWAI_TRACING_ENABLED`; CrewAI captures Flow, Crew, agent, task, LLM, and tool execution |
 | Reflection Loops | ✅ Built | Task guardrail retries and the higher-level Lead Review → targeted Crew revision → Lead Review loop are both wired and bounded |
 | Dynamic Routing | ✅ Built | Native `@router` methods now drive Discovery, review, revision, blueprint, and failure branches |
 

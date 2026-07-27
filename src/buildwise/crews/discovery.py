@@ -75,6 +75,7 @@ def create_discovery_crew(
         verbose=settings.crewai_verbose,
         cache=True,
         memory=False,
+        tracing=settings.crewai_tracing_enabled,
     )
 
 

@@ -200,6 +200,7 @@ def create_technical_planning_crew(
         verbose=settings.crewai_verbose,
         cache=True,
         memory=False,
+        tracing=settings.crewai_tracing_enabled,
     )
 
 
