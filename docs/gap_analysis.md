@@ -6,7 +6,8 @@ codebase. Legend: ✅ Built · 🟡 Partial (real logic exists but incomplete) �
 
 Assessment baseline: 2026-07-27, including the Consulting Flow, five-table
 PostgreSQL persistence layer, consultation clarification/resume API, and final
-cross-stage output validator.
+cross-stage output validator, deterministic blueprint generator, and the
+no-auth `web/` frontend module.
 
 ```
 Actor → Frontend → FastAPI validation → BuildWise CrewAI Flow
@@ -29,13 +30,13 @@ Actor → Frontend → FastAPI validation → BuildWise CrewAI Flow
 
 | Diagram node | Status | Notes |
 |---|---|---|
-| Actor / Frontend | N/A | No frontend in this repository; out of scope here |
+| Actor / Frontend | ✅ Built | `web/` is a frontend module in the same repository. It provides product intake, configurable API connection, resumable consultation state, clarification forms, live stage progress, the final 17-section blueprint viewer, and Markdown download without authentication |
 | FastAPI validation | ✅ Built | The API validates vague-idea intake and typed clarification answers and exposes `POST /api/v1/consultations`, `POST /api/v1/consultations/{id}/clarifications`, `GET /api/v1/consultations/{id}`, and `GET /api/v1/consultations/{id}/result` |
 | BuildWise CrewAI Flow | ✅ Built | `flows/consulting_flow.py::BuildWiseConsultingFlow` is the native `Flow[BuildWiseFlowState]` orchestrator. It connects intake, Discovery, Product Planning, deterministic specialist planning, Technical Planning, Lead Review, revisions, and the blueprint boundary with `@start`/`@listen`/`@router` methods |
 | Discovery Crew | ✅ Built | `crews/discovery.py` + `tasks/discovery.py` |
 | DiscoveryResult | ✅ Built | `domain/discovery.py` |
 | Completeness Router | ✅ Built | `BuildWiseConsultingFlow.route_discovery()` delegates to `route_after_discovery(state)` and emits live clarification, continuation, or failure routes |
-| Clarification loop (pause/answers/resume) | ✅ Built | The API returns active questions, loads persisted Flow state, validates the active round and question set, checkpoints accepted answers before execution, resumes Discovery, and continues to the next pause or terminal state. The frontend is tracked separately as out of scope for this repository |
+| Clarification loop (pause/answers/resume) | ✅ Built | The API returns active questions, loads persisted Flow state, validates the active round and question set, checkpoints accepted answers before execution, resumes Discovery, and continues to the next pause or terminal state. `web/app/page.tsx` renders free-text, numeric, boolean, single-choice, and multiple-choice clarification inputs and resumes the consultation |
 | Early Market Router | ✅ Built | `run_product_planning()` calls `SpecialistPlanner.should_include_early_market_context(...)` before constructing the Product Planning Crew |
 | Product Planning Crew | ✅ Built | `crews/product_planning.py`, incl. `assemble_product_planning_result` → `ProductPlanningResult` |
 | Deterministic Specialist Planner | ✅ Built | `src/buildwise/planning/` implements the pure-Python planner; `BuildWiseConsultingFlow.plan_specialists()` now calls it, stores the `SpecialistExecutionPlan`, registers selected executions, and passes that exact plan to the Technical Planning Crew |
@@ -46,7 +47,7 @@ Actor → Frontend → FastAPI validation → BuildWise CrewAI Flow
 | revisions → rerun affected planning Crew | ✅ Built | `flows/revisions.py` deterministically maps Product Definition, Requirements, and Market & GTM to the Product Planning Crew, and Solution, AI, Security, and QA revisions to the Technical Planning Crew. Technical revisions rerun only the target plus selected downstream dependants (Solution → selected AI/Security/QA; AI → selected Security/QA; Security → selected QA; QA only). The Flow retains revision history and enforces `state.limits.maximum_specialist_revisions`; no revision-planning Agent is used |
 | Output validation | ✅ Built | `validation/output_validator.py::validate_output` performs the final cross-stage pass: it requires all blueprint inputs, verifies session ownership, reruns existing aggregate/ownership/execution-graph validators, checks selected specialist outputs against the execution plan, validates the Lead Review decision, and rejects approval while a blocking revision remains |
 | Deterministic Blueprint Generator | ✅ Built | `reporting/assembler.py` deterministically maps the approved aggregates and usage summary into all 17 `ProductBlueprint` sections; `reporting/markdown_renderer.py` renders and writes `blueprint.md` without an LLM call |
-| Final Report / Frontend | 🟡 Partial | The Markdown report is generated and can be written as `blueprint.md`; no frontend exists in this repository |
+| Final Report / Frontend | ✅ Built | The frontend renders the completed typed blueprint as a navigable 17-section document, surfaces open questions separately from limitations, and downloads `generated_markdown` as `blueprint.md` |
 | Persistence (implicit, cross-cutting) | ✅ Built | `persistence/models.py` defines the five-table MVP schema; `repositories.py` handles consultation snapshots, versioned artifacts, clarification rounds, revisions, and usage; `flow_store.py::BuildWiseFlowStore` is the native CrewAI adapter. The full Flow persistence integration is tested. PostgreSQL is running through Docker Compose and the active local configuration connects on `localhost:5433`; containers use `postgres:5432` internally |
 
 ---
@@ -161,6 +162,20 @@ required-answer validation to `BuildWiseFlowState`, checkpoints accepted
 answers before resuming, and runs the Flow until its next pause or terminal
 result. Creating the service initializes the five-table schema.
 
+### 8. ✅ Done — Frontend — `web/`
+The repository now includes a responsive frontend module built with React,
+Next-compatible routing, TypeScript, and the Sites/Vite runtime. It starts
+consultations from the full product-intake form, persists the consultation ID
+locally for refresh/resume, renders all supported clarification question
+types, polls active Flow stages, displays failures, presents the completed
+17-section blueprint, and downloads `blueprint.md`.
+
+The frontend requires no authentication. It connects to
+`http://localhost:8080/api/v1` by default, supports
+`NEXT_PUBLIC_BUILDWISE_API_URL` and an in-app API setting, and the FastAPI app
+enables the CORS bridge required for browser access. Setup and run instructions
+are documented in the root `README.md`.
+
 ---
 
 ## Smaller loose ends
@@ -171,13 +186,14 @@ result. Creating the service initializes the five-table schema.
   (`SpecialistExecutionPlan`); `routing.py` held a second, buggy
   implementation of the selection *rules* targeting that same model. It has
   been removed in favor of `src/buildwise/planning/` (see step 1 above).
-- Tests now include 62 planner tests, 11 mocked Consulting Flow tests, four
-  persistence tests, and three consultation API/service tests. Coverage
+- Tests now include planner, mocked Consulting Flow, persistence, output
+  assembler, and consultation API/service coverage. Coverage
   includes the happy path, intake rejection, typed clarification, serialized
   state resume through completion, active-round/question validation, status
   and result retrieval, all four review decisions, malformed revision
   decisions, revision-limit exhaustion, and session ownership. The full suite
-  contains 80 passing tests with no live LLM calls.
+  contains 82 passing tests with no live LLM calls. The frontend additionally
+  passes ESLint, TypeScript checking, and its production build.
 - The planner's budget policy is intentionally coarse per the PRD (no exact
   token/dollar estimation): it only reads
   `FlowRuntimeLimits.maximum_agent_executions` and
@@ -239,7 +255,7 @@ Output shape. Same legend: ✅ Built · 🟡 Partial · 🔴 Missing.
 |---|---|---|
 | Flows | ✅ Built | `BuildWiseConsultingFlow` is the live typed orchestrator and is covered by mocked end-to-end tests |
 | Crews | ✅ Built | Four real Crews: `crews/discovery.py`, `crews/product_planning.py`, `crews/technical_planning.py`, `crews/lead_review.py` |
-| Human Feedback | ✅ Built | Structured clarification pause/resume, native persistence, active-question validation, and the HTTP bridge are complete without manual JSON parsing. A frontend is a separate client concern and is out of scope for this repository |
+| Human Feedback | ✅ Built | Structured clarification pause/resume, native persistence, active-question validation, and the HTTP bridge are complete without manual JSON parsing. The `web/` module exposes the full interaction through typed clarification controls and automatic continuation/status updates |
 | Structured Outputs | ✅ Built | `TaskOutput.pydantic` enforced pervasively via `tasks/guardrails.py::require_pydantic_output` and friends |
 | Tool Usage | ✅ Built | `tools/registry.py` wraps official CrewAI tools (`SerperDevTool`, `ScrapeWebsiteTool`, `GithubSearchTool`) |
 | Parallel Execution | 🔴 Missing | The Flow currently executes its Crews sequentially; no Crew branches run concurrently |

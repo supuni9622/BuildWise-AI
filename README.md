@@ -123,9 +123,33 @@ uv run uvicorn buildwise.main:app \
   --port 8080
 ```
 
+## Frontend
+
+Keep the backend running on port `8080`. In a second terminal, run:
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000).
+
+The frontend connects to `http://localhost:8080/api/v1` by default. To use a
+different backend URL, copy the example environment file and update it:
+
+```bash
+cd web
+cp .env.example .env.local
+```
+
+```env
+NEXT_PUBLIC_BUILDWISE_API_URL=http://localhost:8080/api/v1
+```
+
 Check the API:
 ```
-curl -s http://localhost:8000/health | python -m json.tool
+curl -s http://localhost:8080/health | python -m json.tool
 ```
 Expected shape:
 ```json
@@ -138,7 +162,7 @@ Expected shape:
 ```
 Check readiness:
 ```
-curl -s http://localhost:8000/ready | python -m json.tool
+curl -s http://localhost:8080/ready | python -m json.tool
 ```
 Expected with a valid API key and working database:
 ```json
@@ -154,7 +178,7 @@ Expected with a valid API key and working database:
 ```
 Check API version root:
 ```curl
-curl -s http://localhost:8000/api/v1 | python -m json.tool
+curl -s http://localhost:8080/api/v1 | python -m json.tool
 ```
 Expected:
 ```json
@@ -169,7 +193,7 @@ Check request ID propagation:
 ```
 curl -i \
   -H "X-Request-ID: buildwise-local-test-001" \
-  http://localhost:8000/health
+  http://localhost:8080/health
 ```
 
 The response should include:
@@ -300,7 +324,7 @@ docker compose logs -f postgres
 
 Start PostgreSQL and the API:
 ```bash
-docker compose up -d postgres && uv run uvicorn buildwise.main:app --reload --host 0.0.0.0 --port 8000
+docker compose up -d postgres && uv run uvicorn buildwise.main:app --reload --host 0.0.0.0 --port 8080
 ```
 
 Stop the API and PostgreSQL:
@@ -325,7 +349,7 @@ docker run --rm \
 ```
 Check:
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8080/health
 ```
 Inspect the runtime user:
 ```bash
@@ -362,11 +386,11 @@ docker compose logs -f postgres
 ```
 Check health:
 ```bash
-curl -s http://localhost:8000/health | python -m json.tool
+curl -s http://localhost:8080/health | python -m json.tool
 ```
 Check readiness:
 ```bash
-curl -s http://localhost:8000/ready | python -m json.tool
+curl -s http://localhost:8080/ready | python -m json.tool
 ```
 Stop:
 ```bash
