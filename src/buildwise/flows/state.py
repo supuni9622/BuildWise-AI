@@ -34,8 +34,12 @@ from buildwise.domain.intake import (
     ValidatedProductIdea,
 )
 from buildwise.domain.product import ProductDefinition
+from buildwise.domain.product_planning import ProductPlanningResult
 from buildwise.domain.requirements import RequirementsSpecification
+from buildwise.domain.review import LeadReview, RevisionRequest
 from buildwise.domain.session import SessionError
+from buildwise.domain.specialist_planning import SpecialistExecutionPlan
+from buildwise.domain.technical_planning import TechnicalPlanningResult
 from buildwise.domain.usage import UsageSummary
 
 SpecialistExecutionStatus = Literal[
@@ -453,6 +457,11 @@ class BuildWiseFlowState(BuildWiseModel):
     product_definition: ProductDefinition | None = None
     requirements_specification: RequirementsSpecification | None = None
     solution_architecture: SolutionArchitecture | None = None
+    product_planning_result: ProductPlanningResult | None = None
+    specialist_execution_plan: SpecialistExecutionPlan | None = None
+    technical_planning_result: TechnicalPlanningResult | None = None
+    lead_review: LeadReview | None = None
+    revision_history: list[RevisionRequest] = Field(default_factory=list)
 
     specialist_executions: list[SpecialistExecutionState] = Field(
         default_factory=list,
@@ -595,6 +604,8 @@ class BuildWiseFlowState(BuildWiseModel):
                 self.requirements_specification,
             ),
             ("solution_architecture", self.solution_architecture),
+            ("product_planning_result", self.product_planning_result),
+            ("technical_planning_result", self.technical_planning_result),
         ]
 
         for field_name, artifact in session_owned_artifacts:
@@ -1169,6 +1180,76 @@ class BuildWiseFlowState(BuildWiseModel):
             raise ValueError("The specialist artifact_id must match SolutionArchitecture.id.")
 
         self.solution_architecture = solution_architecture
+        self.updated_at = utc_now()
+
+    def set_product_planning_result(
+        self,
+        result: ProductPlanningResult,
+    ) -> None:
+        """Store the validated aggregate produced by Product Planning."""
+
+        self._require_matching_session(
+            artifact_name="product_planning_result",
+            artifact_session_id=result.session_id,
+        )
+        if self.discovery_result is None:
+            raise ValueError("A discovery result is required before product planning.")
+
+        ProductDefinition.validate_discovery_ownership(
+            product_definition=result.product_definition,
+            discovery_result=self.discovery_result,
+        )
+        self.apply_updates(
+            product_planning_result=result,
+            product_definition=result.product_definition,
+            requirements_specification=result.requirements,
+            updated_at=utc_now(),
+        )
+
+    def set_specialist_execution_plan(
+        self,
+        plan: SpecialistExecutionPlan,
+    ) -> None:
+        """Store the deterministic specialist plan used by the technical Crew."""
+
+        if self.product_planning_result is None:
+            raise ValueError("Product planning is required before specialist planning.")
+        self.specialist_execution_plan = plan
+        self.updated_at = utc_now()
+
+    def set_technical_planning_result(
+        self,
+        result: TechnicalPlanningResult,
+    ) -> None:
+        """Store and cross-check the aggregate produced by Technical Planning."""
+
+        self._require_matching_session(
+            artifact_name="technical_planning_result",
+            artifact_session_id=result.session_id,
+        )
+        if self.specialist_execution_plan is None:
+            raise ValueError("A specialist execution plan is required before technical planning.")
+
+        selected = {
+            recommendation.specialist
+            for recommendation in self.specialist_execution_plan.recommendations
+        }
+        result.validate_specialist_selection(
+            ai_selected=SpecialistType.AI_ARCHITECTURE in selected,
+            security_selected=SpecialistType.SECURITY_ARCHITECTURE in selected,
+            qa_selected=SpecialistType.QA_AND_EVALUATION in selected,
+        )
+        self.apply_updates(
+            technical_planning_result=result,
+            solution_architecture=result.solution_architecture,
+            updated_at=utc_now(),
+        )
+
+    def set_lead_review(self, review: LeadReview) -> None:
+        """Store the latest Lead Review and append its revision requests."""
+
+        self.lead_review = review
+        self.revision_history.extend(review.revision_requests)
         self.updated_at = utc_now()
 
     def add_warning(self, warning: WarningMessage) -> None:

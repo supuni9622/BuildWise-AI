@@ -27,20 +27,20 @@ Actor → Frontend → FastAPI validation → BuildWise CrewAI Flow
 |---|---|---|
 | Actor / Frontend | N/A | No frontend in this repository; out of scope here |
 | FastAPI validation | 🟡 Partial | App + `/health`, `/ready`, `/api/v1` exist (`api/router.py`). **No consultation endpoints** — no `POST` to submit a product idea, no clarification-answer endpoint, no session/result retrieval |
-| BuildWise CrewAI Flow | 🔴 Missing | `flows/consulting_flow.py` does not exist. Building blocks do: `BuildWiseFlowState` (state.py), routing functions (routing.py) |
+| BuildWise CrewAI Flow | ✅ Built | `flows/consulting_flow.py::BuildWiseConsultingFlow` is the native `Flow[BuildWiseFlowState]` orchestrator. It connects intake, Discovery, Product Planning, deterministic specialist planning, Technical Planning, Lead Review, revisions, and the blueprint boundary with `@start`/`@listen`/`@router` methods |
 | Discovery Crew | ✅ Built | `crews/discovery.py` + `tasks/discovery.py` |
 | DiscoveryResult | ✅ Built | `domain/discovery.py` |
-| Completeness Router | 🟡 Partial | `route_after_discovery(state)` implements the decision logic, but isn't wired to a live `@router`-decorated Flow method yet |
-| Clarification loop (pause/frontend/answers/resume) | 🔴 Missing | `BuildWiseFlowState.request_clarification()` / `.receive_clarification_answers()` encode the *state transitions*; nothing pauses a real Flow, no endpoint accepts answers, no resume wiring |
-| Early Market Router | 🟡 Partial | `SpecialistPlanner.should_include_early_market_context(discovery, ...)` (`planning/planner.py`, delegating to `planning/policies.py`) implements the deterministic `include_market_and_gtm: bool` decision from structured Discovery signals (specialist signals, market/business risk, weakly-defined-market unknowns) plus explicit request/exclusion. Not yet called by anything live — no Flow exists to call it before constructing the Product Planning Crew |
+| Completeness Router | ✅ Built | `BuildWiseConsultingFlow.route_discovery()` delegates to `route_after_discovery(state)` and emits live clarification, continuation, or failure routes |
+| Clarification loop (pause/frontend/answers/resume) | 🟡 Partial | The Flow now enters `AWAITING_USER_INPUT`, returns its typed state, accepts structured `ClarificationAnswer` values through `submit_clarification_answers()`, and routes a reconstructed `RESUMING` Flow back through Discovery. Persistence and the frontend/API resume endpoint remain missing |
+| Early Market Router | ✅ Built | `run_product_planning()` calls `SpecialistPlanner.should_include_early_market_context(...)` before constructing the Product Planning Crew |
 | Product Planning Crew | ✅ Built | `crews/product_planning.py`, incl. `assemble_product_planning_result` → `ProductPlanningResult` |
-| Deterministic Specialist Planner | ✅ Built | `src/buildwise/planning/` (`policies.py`, `execution_graph.py`, `planner.py`) implements `SpecialistPlanner.create_execution_plan(...) -> SpecialistExecutionPlan` per `prds/05_specialist_planner.md`: pure Python, no CrewAI/LLM/DB, full unit + integration coverage (62 tests, `tests/unit/planning/`, `tests/integration/planning/`). Consumed successfully by `create_technical_planning_crew` in tests. **Not yet wired into a live Flow** — same root cause as "BuildWise CrewAI Flow" below, since `flows/consulting_flow.py` doesn't exist yet |
+| Deterministic Specialist Planner | ✅ Built | `src/buildwise/planning/` implements the pure-Python planner; `BuildWiseConsultingFlow.plan_specialists()` now calls it, stores the `SpecialistExecutionPlan`, registers selected executions, and passes that exact plan to the Technical Planning Crew |
 | Technical Planning Crew | ✅ Built | `crews/technical_planning.py`, incl. `assemble_technical_planning_result` → `TechnicalPlanningResult` |
-| Cost Aggregator | 🔴 Missing | `UsageRecord`/`UsageSummary` models exist (`domain/usage.py`); nothing sums CrewAI per-Crew usage metrics into a session total |
+| Cost Aggregator | 🟡 Partial | The Flow converts each Crew's `UsageMetrics` into a `UsageRecord`, accumulates prompt/completion/total tokens and agent executions in `UsageSummary`, and enforces `maximum_session_tokens`. Provider/model attribution, estimated cost, tool calls, retries, and execution duration are not yet populated |
 | Lead Review Crew | ✅ Built | `crews/lead_review.py` + `tasks/lead_review.py` |
-| approved → blueprint | 🟡 Partial | `route_after_review(revision_required, approved)` exists but takes plain booleans, not the real `LeadReview.decision` enum end-to-end through a live Flow |
-| revisions → rerun affected planning Crew | 🔴 Missing | No logic maps a `RevisionTarget` (`product_definition`, `requirements`, `market_and_gtm`, `solution_architecture`, `ai_architecture`, `security_architecture`, `qa_and_evaluation`) to *which* Crew to rerun, nor enforces `maximum_specialist_revisions` |
-| Output validation | 🔴 Missing | `validation/__init__.py` is an empty stub package |
+| approved → blueprint | 🟡 Partial | The live review router handles `APPROVED` and `APPROVED_WITH_LIMITATIONS`, verifies `approved_for_blueprint`, and invokes an injected `BlueprintBuilder`. The concrete deterministic builder/rendering implementation remains missing |
+| revisions → rerun affected planning Crew | ✅ Built | The Flow maps product targets to Product Planning and technical targets to Technical Planning, cascades product revisions through replanning and technical regeneration, retains revision history, and enforces `maximum_specialist_revisions` |
+| Output validation | 🟡 Partial | The Flow rejects missing/wrong structured Discovery and Lead Review outputs, aggregate assemblers validate Product/Technical Planning, and state setters enforce session ownership and specialist selection. The dedicated `validation/` package and a unified post-Crew validation service remain missing |
 | Deterministic Blueprint Generator | 🔴 Missing | `reporting/__init__.py` is empty. `ProductBlueprint`/`BlueprintSection` models exist (`domain/blueprint.py`) with no assembler |
 | Final Report / Frontend | 🔴 Missing | Depends on the blueprint generator above |
 | Persistence (implicit, cross-cutting) | 🟡 Partial | `persistence/database.py` is a bare engine + connectivity check — **no ORM models, no tables, no repositories** for sessions, artifacts, or revision history |
@@ -68,54 +68,28 @@ GTM into the *technical* plan, contradicting the PRD's explicit rule that
 Market & GTM belongs only to the Product Planning Crew and must never be
 reselected during technical planning. That function and its
 `_evaluate_ai_architect`/`_evaluate_security_architect`/`_evaluate_qa_architect`
-helpers were dead code (nothing outside `routing.py` called them, since no
-Flow exists yet) and have been deleted; `route_after_specialist_planning`/
+helpers were dead code at the time (nothing outside `routing.py` called them)
+and have been deleted; `route_after_specialist_planning`/
 `route_after_specialists` now require only `SOLUTION_ARCHITECTURE`.
 
-**Residual gap:** nothing calls `SpecialistPlanner` yet — that wiring is
-explicitly scoped to step 3 below (`flows/consulting_flow.py`), matching the
-PRD's own implementation order (its step 8, "wire planner into
-consulting_flow.py later").
+The planner is now called by `BuildWiseConsultingFlow.plan_specialists()` and
+its exact output drives `create_technical_planning_crew(...)`.
 
-### 2. Persistence schema — `src/buildwise/persistence/`
+### 2. ✅ Done — Main orchestrator — `src/buildwise/flows/consulting_flow.py`
+Implemented per `prds/06_consulting_flow_prd.md`. The native CrewAI Flow owns
+stage transitions, routing, structured clarification pause/resume, all four
+Crew executions, planner execution, bounded revision routing, usage capture,
+approval/rejection, and the blueprint-builder boundary. `BuildWiseFlowState`
+now retains the preferred aggregate results, specialist plan, full Lead
+Review, and revision history.
+
+### 3. Persistence schema — `src/buildwise/persistence/`
 SQLAlchemy ORM models (or a document-style JSON-column approach) for
 `ConsultingSession`, the serialized `BuildWiseFlowState`, and revision
 history, plus repository functions. Every PRD assumes the Flow "persists
 validated artifacts" — there's currently nowhere to put them.
 
-### 3. `flows/consulting_flow.py` — the actual orchestrator
-Build a `Flow[BuildWiseFlowState]` subclass wiring `@start`/`@listen`/
-`@router` methods to the existing `routing.py` functions and the four Crew
-factories. Installed CrewAI (1.15.5) already provides native mechanisms for
-the hardest parts — use them instead of custom equivalents:
-  - **Routing**: `@router(previous_method)` returning route-name strings,
-    plus `and_()`/`or_()` for multi-predecessor listens — matches the
-    `FlowRoute` StrEnum already defined in `routing.py`.
-  - **Human-in-the-loop clarification**: `@human_feedback(...)` and
-    `Flow.ask(...)` with a pluggable `InputProvider`/`HumanFeedbackProvider`
-    (including a non-blocking `HumanFeedbackPending` mode for
-    webhook/async-resume patterns) — this is the "pause / frontend / answers
-    / resume" loop in the diagram; no custom pause mechanism should be built.
-  - **State persistence across pause/resume**: `@persist(FlowPersistence)` —
-    CrewAI ships `SQLiteFlowPersistence`; a Postgres-backed implementation of
-    the `FlowPersistence` ABC would plug in directly once step 2 exists.
-  - **Concurrency**: Crew-level, decided by the Flow (e.g. Market & GTM
-    running alongside Technical Planning) — not inside any single Crew.
-
-### 4. Revision routing
-A small deterministic mapping from `RevisionTarget` to "rerun Product
-Planning Crew" vs "rerun Technical Planning Crew" (with the dependency-aware
-subset described in `crews_refactor_plan.md` §11: reviving Solution
-Architecture must cascade to AI/Security/QA if they depend on it; reviving
-just QA must not). Bounded by `BuildWiseFlowState.limits.maximum_specialist_revisions`
-(already modeled, not yet enforced anywhere live).
-
-### 5. Cost Aggregator
-Deterministic, Flow-owned: collect CrewAI's per-Crew `UsageMetrics` after
-each `kickoff()` into `UsageSummary` (already modeled in `domain/usage.py`).
-No new cost-calculation logic needed — just aggregation.
-
-### 6. Output validation — `src/buildwise/validation/`
+### 4. 🟡 Partial — Output validation — `src/buildwise/validation/`
 The Flow-side check described in every Crew PRD: reject a "successful"
 `CrewOutput` when `.pydantic` is `None`, the wrong type, or fails ownership —
 largely already covered by the same `run_domain_validator`/
@@ -123,15 +97,23 @@ largely already covered by the same `run_domain_validator`/
 still needs one more pass after assembling `ProductPlanningResult`/
 `TechnicalPlanningResult`/`LeadReview` before persisting them.
 
-### 7. Deterministic Blueprint Generator — `src/buildwise/reporting/`
+### 5. Deterministic Blueprint Generator — `src/buildwise/reporting/`
 Consume the approved aggregates + `LeadReview`, produce a `ProductBlueprint`
 (model already exists), render Markdown. No LLM call needed per the PRDs
 unless deterministic assembly proves unreadable later.
 
-### 8. Consultation API endpoints — `src/buildwise/api/v1/`
+The Flow-side `BlueprintBuilder` protocol and approval boundary now exist;
+the concrete builder is still required.
+
+### 6. Complete usage and runtime-budget accounting
+Extend the new Flow-owned token aggregator with provider/model attribution,
+estimated cost, tool calls, retries, duration, and enforcement for every
+remaining `FlowRuntimeLimits` field.
+
+### 7. Consultation API endpoints — `src/buildwise/api/v1/`
 `POST` to start a consultation (kicks off the Flow), `POST` to submit
 clarification answers (resumes it), `GET` to poll status/result. These call
-into the Flow built in step 3 and the persistence layer built in step 2.
+into the completed Flow and the persistence layer in step 3.
 
 ---
 
@@ -143,21 +125,16 @@ into the Flow built in step 3 and the persistence layer built in step 2.
   (`SpecialistExecutionPlan`); `routing.py` held a second, buggy
   implementation of the selection *rules* targeting that same model. It has
   been removed in favor of `src/buildwise/planning/` (see step 1 above).
-- Tests now exist for the planning module (`tests/unit/planning/`,
-  `tests/integration/planning/`, 62 tests, no live LLM calls) plus shared
-  fixture builders in `tests/fixtures/planning.py` for the heavily
-  cross-validated `DiscoveryResult`/`ProductPlanningResult` graph. Everywhere
-  else (`tests/unit/`, `tests/integration/` outside `planning/`) is still
-  empty scaffolding — every other PRD's testing section still describes what
-  to cover once the Flow lands.
+- Tests now include 62 planner tests plus four mocked Consulting Flow
+  integration tests covering the happy path, intake rejection, typed
+  clarification pause/answer handling, and session ownership. The full suite
+  contains 66 passing tests with no live LLM calls.
 - The planner's budget policy is intentionally coarse per the PRD (no exact
   token/dollar estimation): it only reads
   `FlowRuntimeLimits.maximum_agent_executions` and
-  `.maximum_estimated_cost_usd`. `.maximum_session_tokens`,
-  `.maximum_tool_calls`, and `.maximum_execution_seconds` are modeled but
-  unused by the planner (by design — they're runtime guards for actual Crew
-  execution, not pre-execution selection policy) and remain unenforced
-  anywhere live, same as noted under Cost — Session budget controls below.
+  `.maximum_estimated_cost_usd`. The Flow now enforces
+  `.maximum_session_tokens` from aggregated Crew usage; `.maximum_tool_calls`
+  and `.maximum_execution_seconds` remain unenforced.
 - `reporting/` and `validation/` currently contain only a one-line docstring
   each (`"""Blueprint assembly and rendering."""` /
   `"""Deterministic and model-assisted validation."""`) — no code yet; first
@@ -177,23 +154,23 @@ Output shape. Same legend: ✅ Built · 🟡 Partial · 🔴 Missing.
 | PRD ID | Requirement | Status | Evidence |
 |---|---|---|---|
 | FR1 | Accept vague ideas | 🟡 Partial | `domain/intake.py` models (`ProductIdeaRequest`, `ValidatedProductIdea`) and the Discovery Crew (`crews/discovery.py`) can process one, but there is no live endpoint to submit one — `api/v1/router.py` only exposes the API root |
-| FR2 | Generate dynamic questions | 🟡 Partial | `DiscoveryResult`/`ClarificationQuestionSet` (`domain/discovery.py`) and Discovery Crew tasks (`tasks/discovery.py`) generate these at the Crew level, but nothing wires this into a running, resumable session |
-| FR3 | Pause and resume sessions | 🔴 Missing | `BuildWiseFlowState.request_clarification()` / `.receive_clarification_answers()` model the *state transitions* only; no live `Flow`, no `@human_feedback`, no persistence, no endpoint actually pauses/resumes anything (matches the flow-diagram gap above) |
-| FR4 | Select specialists dynamically | 🟡 Partial | The deterministic planner (`src/buildwise/planning/`) is fully built, tested, and its `SpecialistExecutionPlan` output is consumed by `create_technical_planning_crew` — the selection *policy* is done. Still 🟡 for the requirement as a whole because no live Flow calls it yet; a real consultation cannot dynamically select specialists end-to-end until `flows/consulting_flow.py` exists |
+| FR2 | Generate dynamic questions | ✅ Built | Discovery produces `ClarificationQuestionSet` and the Flow exposes it as the typed pause result |
+| FR3 | Pause and resume sessions | 🟡 Partial | The live Flow pauses in `AWAITING_USER_INPUT`, accepts structured answers, and resumes through Discovery. Durable persistence and the external resume endpoint remain missing |
+| FR4 | Select specialists dynamically | ✅ Built | The live Flow calls `SpecialistPlanner.create_execution_plan(...)`, stores its plan, and uses it to construct Technical Planning |
 | FR5 | Generate product blueprint | 🔴 Missing | `ProductBlueprint`/`BlueprintSection` models exist (`domain/blueprint.py`); `reporting/__init__.py` is an empty stub — no assembler produces one |
 | FR6 | Support markdown export | 🔴 Missing | `ProductBlueprint.generated_markdown` is a required field in the model, but nothing populates it since no generator exists |
-| FR7 | Provide execution tracing | 🟡 Partial | HTTP-level request tracing exists (`observability/context.py`, `observability/middleware.py`, `X-Request-ID`); no CrewAI-native Crew/Flow tracing or per-session trace persisted, since no live Flow runs Crews yet |
+| FR7 | Provide execution tracing | 🟡 Partial | HTTP request tracing and a live CrewAI Flow execution path exist, with stage-level structlog events. Explicit CrewAI trace configuration and per-session trace persistence remain missing |
 
 ## Non-Functional Requirements
 
 | PRD requirement | Status | Evidence |
 |---|---|---|
-| Performance: < 2 minutes end-to-end | 🔴 Not verifiable | No live orchestrator exists to run end-to-end and measure against |
-| Reliability: partial specialist failures shouldn't fail the whole workflow | 🟡 Partial | `SpecialistExecutionState` models per-specialist `failed`/retry semantics (`flows/state.py`) cleanly, but nothing yet catches a real Crew failure and keeps the Flow going, because the Flow doesn't run |
+| Performance: < 2 minutes end-to-end | 🔴 Not verifiable | The orchestrator exists, but no live-LLM end-to-end performance benchmark has been run |
+| Reliability: partial specialist failures shouldn't fail the whole workflow | 🟡 Partial | The live Flow tracks specialist lifecycle and routes required-specialist failure, but Crew-level exception normalization and optional-specialist degraded continuation are not yet complete |
 | Security — Prompt Injection Protection | 🔴 Missing | No sanitization or prompt-injection defenses found anywhere in `tasks/` or `domain/intake.py`; input is only Pydantic-schema-validated, not adversarially screened |
 | Security — Tool Restrictions | ✅ Built | `tools/registry.py` exposes a small, explicit `ToolKey` whitelist (`web_search`, `web_scraper`, `github_search`) with per-tool env-var gating; agents can only request tools by these keys |
 | Security — Input Validation | 🟡 Partial | Strong Pydantic validation exists on all domain models (`domain/intake.py`, etc.), but there is no live endpoint yet accepting raw external input for that validation to guard |
-| Cost — Session budget controls | 🟡 Partial | `FlowRuntimeLimits` (`flows/state.py`) models `maximum_session_tokens`, `maximum_estimated_cost_usd`, `maximum_agent_executions`, `maximum_tool_calls`, `maximum_specialist_revisions` — none of it is enforced anywhere live, since there is no running Flow and no Cost Aggregator |
+| Cost — Session budget controls | 🟡 Partial | The Flow enforces session tokens and revision rounds and the planner applies agent/cost selection limits. Tool-call, duration, and actual estimated-cost enforcement remain incomplete |
 
 ## Agents
 
@@ -214,15 +191,15 @@ Output shape. Same legend: ✅ Built · 🟡 Partial · 🔴 Missing.
 
 | PRD claims | Status | Evidence |
 |---|---|---|
-| Flows | 🔴 Missing | Only `flows/smoke.py` (a trivial test `Flow`) exists; the real orchestrator (`flows/consulting_flow.py`) is not built |
+| Flows | ✅ Built | `BuildWiseConsultingFlow` is the live typed orchestrator and is covered by mocked end-to-end tests |
 | Crews | ✅ Built | Four real Crews: `crews/discovery.py`, `crews/product_planning.py`, `crews/technical_planning.py`, `crews/lead_review.py` |
-| Human Feedback | 🔴 Missing | No use of CrewAI's `@human_feedback` / `Flow.ask()` anywhere; only state-shape modeling in `flows/state.py` |
+| Human Feedback | 🟡 Partial | Structured clarification pause/resume is implemented at the Flow boundary without manual JSON parsing. No external input provider, persistence adapter, or API/frontend bridge exists yet |
 | Structured Outputs | ✅ Built | `TaskOutput.pydantic` enforced pervasively via `tasks/guardrails.py::require_pydantic_output` and friends |
 | Tool Usage | ✅ Built | `tools/registry.py` wraps official CrewAI tools (`SerperDevTool`, `ScrapeWebsiteTool`, `GithubSearchTool`) |
-| Parallel Execution | 🔴 Missing | No orchestration exists yet to run any Crews concurrently (e.g., Market & GTM alongside Technical Planning) |
-| Tracing | 🟡 Partial | HTTP-request tracing only (`observability/middleware.py`); no CrewAI-native Crew/Flow trace capture |
-| Reflection Loops | 🟡 Partial | Task-level retry loops exist via CrewAI's `guardrail_max_retries` pattern (`tasks/guardrails.py`); the higher-level "Lead Review requests revision → rerun specialist Crew" loop from the PRD is not wired since the Flow doesn't exist |
-| Dynamic Routing | 🟡 Partial | `flows/routing.py` defines the routing *decision functions* (`route_after_discovery`, `route_after_review`, etc.) but none are wired to a live `@router`-decorated Flow method |
+| Parallel Execution | 🔴 Missing | The Flow currently executes its Crews sequentially; no Crew branches run concurrently |
+| Tracing | 🟡 Partial | HTTP request tracing, a real CrewAI execution path, and stage-level Flow logs exist; explicit CrewAI trace wiring and persistence remain missing |
+| Reflection Loops | ✅ Built | Task guardrail retries and the higher-level Lead Review → targeted Crew revision → Lead Review loop are both wired and bounded |
+| Dynamic Routing | ✅ Built | Native `@router` methods now drive Discovery, review, revision, blueprint, and failure branches |
 
 ## Final Output — Product Blueprint sections
 
@@ -255,8 +232,8 @@ them (see FR5/FR6 above) — this table compares model *shape* only.
    `SpecialistType.SOLUTION_ARCHITECTURE` as `required=True` and rejects any
    attempt to exclude it — but `agents/registry.py`'s
    `_validate_required_agent_set()` still doesn't include it among the core
-   agents. These two now disagree; reconcile the registry to match the
-   planner (or vice versa) before wiring either into a live Flow.
+   agents. The live Flow follows the planner, so the registry metadata should
+   be reconciled with the execution behavior.
 2. **"Engineering Lead" agent is entirely unbuilt** — no contract, enum
    value, task, or Crew reference exists. Needs a PRD-vs-scope decision: build
    it, or update `prd.md` to drop it.
@@ -287,7 +264,7 @@ further alignment work.
 
 | Contract element | Status | Notes |
 |---|---|---|
-| Flow-first orchestration (Flows own routing/state/pause-resume/specialist selection) | 🔴 Missing | Principle is sound and the building blocks exist (`flows/state.py`, `flows/routing.py`), but no `Flow` subclass runs any of it — same root cause tracked throughout this document |
+| Flow-first orchestration (Flows own routing/state/pause-resume/specialist selection) | ✅ Built | `BuildWiseConsultingFlow` owns routing, aggregate state, clarification pause/resume, planner calls, Crew execution, revisions, usage capture, completion, and deterministic failure routes |
 | Application Service Layer (`full_architecture_flow.md` §3: Session Service, Flow Execution Service, Human Feedback Service, Blueprint Service, Usage and Cost Service, Validation Service, Guardrail Service, Tool Execution Service) | 🔴 Missing | No `application/` package exists at all (not even empty) — `crewai_runtime_architecture.md` §24.1 talks about an *existing* `application/` package to inspect/migrate, but the current repo has none. Either that section is stale or the package was already removed |
 | JSON-first Crew standard (`crewai_runtime_architecture.md` §22, §25: `crews/<name>/crew.jsonc` + `agents/<name>.jsonc`, loaded by a shared Python loader) | 🔴 Missing / diverged | The actual implementation is 100% Python: `crews/*.py` factory functions (`create_discovery_crew`, `create_product_planning_crew`, etc.), `tasks/*.py`, and `agents/*.py` contract modules (`agents/base.py::AgentContract`, `agents/registry.py`, `agents/factory.py`). No `.jsonc` file exists anywhere in `src/`. This is a foundational, repo-wide structural choice that contradicts the contract's canonical folder tree — needs an explicit decision to update the contract or migrate the code |
 | Final folder structure (`crewai_runtime_architecture.md` §22) | 🟡 Diverged | Beyond the JSON-first Crew point above: `infrastructure/` exists as a directory but is completely empty (no `__init__.py`, no `llm.py`/`clock.py`); `knowledge/` is empty (no `README.md`, no `product/`/`architecture/`/etc. subdirs); `observability/` has `context.py` + `middleware.py`, not the target's `events.py`/`tracing.py`/`usage.py`; `tools/` has no `policies.py` or `research/`; `flows/` has no `persistence.py` or `guardrails.py` (guardrails currently live in `tasks/guardrails.py` instead); domain module names differ from the target list (`market_and_gtm.py` vs. target `market.py`, `qa.py` vs. target `qa_evaluation.py`) and the domain package has grown several modules the contract's tree doesn't mention (`product_planning.py`, `technical_planning.py`, `specialist_planning.py`, `agent.py`, `api.py`) — a natural result of the Crew-refactor work happening after this contract was written |
@@ -320,7 +297,7 @@ further alignment work.
 | Docker/security CI workflow (image build, container smoke test, dependency audit, secret scanning, image scanning) | 🔴 Missing | Same as above — the Docker image itself is ready to be built by CI, but nothing builds or scans it automatically |
 | `GET /metrics/summary` endpoint (`full_architecture_flow.md` §6) | 🔴 Missing | Only `/health` and `/ready` exist in `api/router.py`; no metrics-summary endpoint |
 | PostgreSQL vs. SQLite as system of record | 🟡 Doc conflict, impl. reasonable | `crewai_runtime_architecture.md` §4.5/§3 treats PostgreSQL as the only system of record; `full_architecture_flow.md` §15 explicitly allows SQLite for local dev with Postgres for hosted deployment. Current `Settings.database_url` defaults to SQLite locally while `docker-compose.yml` wires Postgres for the containerized path — matches the *second* document, conflicts with the first's stricter wording. No ORM models exist yet either way (tracked above under Persistence) |
-| CrewAI tracing wired to Flow/Crew/agent/task/tool/LLM execution | 🔴 Missing | `Settings.crewai_tracing_enabled` exists as a config flag, but nothing consumes it — there's no live Flow or Crew execution path yet for tracing to attach to (same root cause as the Flow gap above) |
+| CrewAI tracing wired to Flow/Crew/agent/task/tool/LLM execution | 🟡 Partial | A real Flow/Crew execution path and stage-level structlog events now exist, but `Settings.crewai_tracing_enabled` is not explicitly passed into the Flow and no trace records are persisted per consulting session |
 
 ---
 
@@ -344,7 +321,7 @@ Same legend: ✅ Built · 🟡 Partial · 🔴 Missing.
 | Claude/Anthropic as documented alternate/evaluation config (§16, .env.example's `CLAUDE_*_MODEL`, `EVALUATION_MODEL`, `STRONG_EVALUATION_MODEL`) | 🔴 Missing | None of these fields exist on the `Settings` class (`config/settings.py`); since `model_config` sets `extra="ignore"`, setting them in `.env` is silently a no-op. No code path reads or constructs an Anthropic `LLM` anywhere |
 | Model fallback policy (`.env.example`'s `FALLBACK_*_MODEL`, `MODEL_FALLBACK_*`) | 🔴 Missing | Same gap as above — documented in `.env.example` only, absent from `Settings`, and `factory.py::resolve_model_name` has no retry-with-fallback logic; a misconfigured or failing model raises `AgentProviderConfigurationError` with no fallback attempt |
 | Multi-provider dependency readiness (doc's §14 "should remain provider agnostic") | ✅ Built | `pyproject.toml`: `crewai[openai,anthropic,litellm,tools]==1.15.5` — both OpenAI and Anthropic extras plus `litellm` are installed, so switching any tier to `anthropic/...` today is a config-only change, not a code change |
-| Per-tier cost tracking (doc's entire §6-§9 cost comparison implies costs get measured) | 🔴 Missing | `domain/usage.py::UsageRecord`/`UsageSummary` model `model`, `provider`, `estimated_cost_usd` fields, but nothing in the codebase constructs a `UsageRecord` — same root cause as the Cost Aggregator gap noted earlier in this document |
+| Per-tier cost tracking (doc's entire §6-§9 cost comparison implies costs get measured) | 🟡 Partial | The Flow now constructs one `UsageRecord` per Crew and aggregates token counts and successful requests. It does not yet populate model/provider or estimated-cost fields, so tier-specific cost reporting remains incomplete |
 
 ## Key misalignments to resolve
 
