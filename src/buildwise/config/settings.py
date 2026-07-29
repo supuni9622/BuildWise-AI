@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     llm_max_retries: int = Field(default=2, ge=0, le=5)
     llm_request_timeout_seconds: int = Field(default=240, ge=10, le=300)
     max_agent_iterations: int = Field(default=4, ge=1, le=50)
+    agent_task_retry_limit: int = Field(default=0, ge=0, le=5)
     max_execution_seconds: int = Field(default=900, ge=60, le=3600)
 
     max_session_tokens: int = Field(default=120_000, ge=1_000)

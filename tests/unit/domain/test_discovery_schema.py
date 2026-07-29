@@ -50,6 +50,44 @@ def test_unknown_specialist_signals_are_rejected() -> None:
         )
 
 
+def test_capability_signals_are_normalized_before_cross_field_validation() -> None:
+    classification = CapabilityClassification.model_validate(
+        {
+            "capabilities": [CapabilityType.AI_CORE],
+            "primary_capability": CapabilityType.AI_CORE,
+            "confidence": ConfidenceLevel.HIGH,
+            "confidence_score": 0.9,
+            "rationale": "The product uses AI with retrieval and workflow agents.",
+            "rag_required": True,
+            "agents_required": True,
+        }
+    )
+
+    assert classification.capabilities == [
+        CapabilityType.AI_CORE,
+        CapabilityType.RAG,
+        CapabilityType.AGENTIC_WORKFLOW,
+    ]
+    assert classification.ai_required is True
+
+
+def test_primary_capability_is_added_when_provider_omits_it_from_capabilities() -> None:
+    classification = CapabilityClassification.model_validate(
+        {
+            "capabilities": [CapabilityType.STANDARD_SOFTWARE],
+            "primary_capability": CapabilityType.ANALYTICS,
+            "confidence": ConfidenceLevel.MEDIUM,
+            "confidence_score": 0.7,
+            "rationale": "Analytics is the primary capability.",
+        }
+    )
+
+    assert classification.capabilities == [
+        CapabilityType.STANDARD_SOFTWARE,
+        CapabilityType.ANALYTICS,
+    ]
+
+
 def test_resolved_context_keys_remain_slug_validated() -> None:
     with pytest.raises(ValidationError, match="string_pattern_mismatch"):
         ProductIdeaContext.model_validate(

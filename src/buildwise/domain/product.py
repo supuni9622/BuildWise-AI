@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Literal
+from uuid import UUID, uuid5
 
 from pydantic import Field, field_validator, model_validator
 
@@ -238,8 +240,8 @@ class ProductFeature(BuildWiseModel):
     included_in_mvp: bool = False
     ai_enabled: bool = False
 
-    target_persona_ids: list[ArtifactId] = Field(min_length=1)
-    supporting_goal_ids: list[ArtifactId] = Field(min_length=1)
+    target_persona_ids: list[ArtifactId]
+    supporting_goal_ids: list[ArtifactId]
 
     dependencies: list[ArtifactId] = Field(default_factory=list)
     exclusions: list[MediumText] = Field(default_factory=list)
@@ -286,6 +288,16 @@ class ProductFeature(BuildWiseModel):
     @model_validator(mode="after")
     def validate_feature_scope(self) -> ProductFeature:
         """Validate MVP inclusion, priority, and feature status."""
+
+        if self.status != "excluded" and not self.target_persona_ids:
+            raise ValueError(
+                "A non-excluded feature requires at least one target persona."
+            )
+
+        if self.status != "excluded" and not self.supporting_goal_ids:
+            raise ValueError(
+                "A non-excluded feature requires at least one supporting goal."
+            )
 
         if self.included_in_mvp and self.priority is RequirementPriority.WONT_HAVE:
             raise ValueError(
@@ -499,6 +511,37 @@ def _artifact_label_lookup(
     return lookup
 
 
+def _is_uuid(value: object) -> bool:
+    if isinstance(value, UUID):
+        return True
+    if not isinstance(value, str):
+        return False
+    try:
+        UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _normalize_defined_ids(
+    artifacts: list[dict[str, object]],
+    *,
+    namespace: UUID,
+    prefix: str,
+    replacements: dict[str, UUID],
+) -> None:
+    for index, artifact in enumerate(artifacts):
+        identifier = artifact.get("id")
+        if _is_uuid(identifier):
+            continue
+        token = str(identifier or f"{prefix}-{index}")
+        replacement = replacements.setdefault(
+            token,
+            uuid5(namespace, f"buildwise:product-definition:{token}"),
+        )
+        artifact["id"] = replacement
+
+
 def _deduplicate(values: list[object]) -> list[object]:
     result: list[object] = []
     for value in values:
@@ -510,7 +553,7 @@ def _deduplicate(values: list[object]) -> list[object]:
 def _normalize_reference_list(
     owner: dict[str, object],
     field_name: str,
-    label_lookup: dict[str, object],
+    label_lookup: Mapping[str, object],
 ) -> None:
     raw_references = owner.get(field_name)
     if not isinstance(raw_references, list):
@@ -522,15 +565,6 @@ def _normalize_reference_list(
         for reference in raw_references
     ]
     owner[field_name] = _deduplicate(resolved)
-
-
-def _deduplicate_list_field(
-    owner: dict[str, object],
-    field_name: str,
-) -> None:
-    value = owner.get(field_name)
-    if isinstance(value, list):
-        owner[field_name] = _deduplicate(value)
 
 
 class ProductDefinition(BuildWiseModel):
@@ -603,11 +637,81 @@ class ProductDefinition(BuildWiseModel):
         features = _copy_mapping_list(normalized.get("features"))
         roadmap = _copy_mapping_list(normalized.get("roadmap"))
         risks = _copy_mapping_list(normalized.get("risks"))
+        cost_estimates = _copy_mapping_list(
+            normalized.get("product_cost_estimates")
+        )
+        source_metadata = _copy_mapping_list(
+            normalized.get("source_metadata")
+        )
 
-        goal_ids = _artifact_label_lookup(goals, "title")
-        persona_ids = _artifact_label_lookup(personas, "name")
-        feature_ids = _artifact_label_lookup(features, "name")
-        roadmap_ids = _artifact_label_lookup(roadmap, "title")
+        try:
+            namespace = UUID(str(normalized.get("session_id")))
+        except ValueError:
+            return value
+
+        replacements: dict[str, UUID] = {}
+        top_level_id = normalized.get("id")
+        if not _is_uuid(top_level_id):
+            token = str(top_level_id or "product-definition")
+            normalized["id"] = replacements.setdefault(
+                token,
+                uuid5(
+                    namespace,
+                    f"buildwise:product-definition:{token}",
+                ),
+            )
+
+        for prefix, artifacts in (
+            ("goal", goals),
+            ("persona", personas),
+            ("feature", features),
+            ("roadmap", roadmap),
+            ("risk", risks),
+            ("cost", cost_estimates),
+            ("source", source_metadata),
+        ):
+            _normalize_defined_ids(
+                artifacts,
+                namespace=namespace,
+                prefix=prefix,
+                replacements=replacements,
+            )
+
+        replacement_lookup = {
+            key.strip().casefold(): replacement
+            for key, replacement in replacements.items()
+        }
+
+        goal_ids = {
+            **replacement_lookup,
+            **_artifact_label_lookup(goals, "title"),
+        }
+        persona_ids = {
+            **replacement_lookup,
+            **_artifact_label_lookup(personas, "name"),
+        }
+        feature_ids = {
+            **replacement_lookup,
+            **_artifact_label_lookup(features, "name"),
+        }
+        roadmap_ids = {
+            **replacement_lookup,
+            **_artifact_label_lookup(roadmap, "title"),
+        }
+
+        for goal in goals:
+            _normalize_reference_list(
+                goal,
+                "source_reference_ids",
+                replacement_lookup,
+            )
+
+        for persona in personas:
+            _normalize_reference_list(
+                persona,
+                "source_reference_ids",
+                replacement_lookup,
+            )
 
         for feature in features:
             _normalize_reference_list(
@@ -621,7 +725,11 @@ class ProductDefinition(BuildWiseModel):
                 goal_ids,
             )
             _normalize_reference_list(feature, "dependencies", feature_ids)
-            _deduplicate_list_field(feature, "source_reference_ids")
+            _normalize_reference_list(
+                feature,
+                "source_reference_ids",
+                replacement_lookup,
+            )
 
         for item in roadmap:
             _normalize_reference_list(item, "feature_ids", feature_ids)
@@ -634,15 +742,28 @@ class ProductDefinition(BuildWiseModel):
                 "affected_feature_ids",
                 feature_ids,
             )
-            _deduplicate_list_field(risk, "source_reference_ids")
+            _normalize_reference_list(
+                risk,
+                "source_reference_ids",
+                replacement_lookup,
+            )
             if risk.get("accepted") is not True:
                 risk["acceptance_rationale"] = None
+
+        for estimate in cost_estimates:
+            _normalize_reference_list(
+                estimate,
+                "source_reference_ids",
+                replacement_lookup,
+            )
 
         normalized["goals"] = goals
         normalized["personas"] = personas
         normalized["features"] = features
         normalized["roadmap"] = roadmap
         normalized["risks"] = risks
+        normalized["product_cost_estimates"] = cost_estimates
+        normalized["source_metadata"] = source_metadata
         _normalize_reference_list(
             normalized,
             "mvp_feature_ids",

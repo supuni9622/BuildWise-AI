@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 
@@ -689,6 +689,53 @@ class CapabilityClassification(BuildWiseModel):
     evidence_reference_ids: list[ArtifactId] = Field(default_factory=list)
 
     classified_at: datetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_capability_signals(cls, value: Any) -> Any:
+        """Repair common structured-output inconsistencies before validation.
+
+        Provider structured-output parsing validates this model before the Flow
+        can run its normalizers. Keep the explicit boolean signals authoritative
+        and deterministically add their corresponding capability labels.
+        """
+
+        if not isinstance(value, dict):
+            return value
+
+        normalized = dict(value)
+        capabilities = list(normalized.get("capabilities") or [])
+
+        primary_capability = normalized.get("primary_capability")
+        if primary_capability is not None:
+            capabilities.append(primary_capability)
+
+        signal_capabilities = {
+            "rag_required": CapabilityType.RAG,
+            "agents_required": CapabilityType.AGENTIC_WORKFLOW,
+            "automation_required": CapabilityType.AUTOMATION,
+            "sensitive_data_detected": CapabilityType.SENSITIVE_DATA,
+            "regulated_domain_detected": CapabilityType.REGULATED,
+            "real_time_processing_required": CapabilityType.REAL_TIME,
+            "external_integrations_expected": CapabilityType.INTEGRATION_HEAVY,
+        }
+        for signal, capability in signal_capabilities.items():
+            if normalized.get(signal) is True:
+                capabilities.append(capability)
+
+        capabilities = list(dict.fromkeys(capabilities))
+        normalized["capabilities"] = capabilities
+
+        ai_capabilities = {
+            CapabilityType.AI_ASSISTED,
+            CapabilityType.AI_CORE,
+            CapabilityType.RAG,
+            CapabilityType.AGENTIC_WORKFLOW,
+        }
+        if any(capability in ai_capabilities for capability in capabilities):
+            normalized["ai_required"] = True
+
+        return normalized
 
     @field_validator("classified_at")
     @classmethod

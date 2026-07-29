@@ -484,6 +484,7 @@ The relevant limits are intentionally separate:
 | Boundary | Current value | Effect |
 |---|---:|---|
 | Agent iterations | 4 | Maximum internal Agent turns per task |
+| Agent task retries | 0 | Do not regenerate a full task after provider-side parsing failure |
 | CrewAI reasoning | Disabled | Prevents automatic plan/execute/observe expansion |
 | Provider retries | 2 | Up to two provider retry attempts after the initial request |
 | Task guardrail retries | 2 | Bounded correction attempts after guardrail rejection |

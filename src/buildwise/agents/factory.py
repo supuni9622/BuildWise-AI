@@ -207,6 +207,7 @@ class AgentFactory:
                 runtime.max_iter,
                 self._settings.max_agent_iterations,
             ),
+            "max_retry_limit": self._settings.agent_task_retry_limit,
             "max_rpm": runtime.max_rpm,
             "reasoning": reasoning_enabled,
             "respect_context_window": (runtime.respect_context_window),
