@@ -34,6 +34,15 @@ from buildwise.domain.product import ProductDefinition
 from buildwise.domain.product_planning import ProductPlanningResult
 from buildwise.domain.requirements import RequirementsSpecification
 from buildwise.domain.review import RevisionRequest
+from buildwise.planning.specialist_context import (
+    ProductDefinitionProjection,
+    RequirementsProjection,
+)
+from buildwise.tasks.context_wiring import (
+    PRODUCT_DEFINITION_CONTEXT_PLACEHOLDER,
+    REQUIREMENTS_CONTEXT_PLACEHOLDER,
+    wire_compact_context,
+)
 from buildwise.tasks.market_and_gtm import create_market_and_gtm_task
 from buildwise.tasks.product_definition import create_product_definition_task
 from buildwise.tasks.requirements import create_requirements_task
@@ -79,6 +88,7 @@ def create_product_planning_crew(
     tasks: list[Task] = []
     product_definition_task: Task | None = None
     requirements_task: Task | None = None
+    market_and_gtm_task: Task | None = None
 
     if execution_target in {None, RevisionTarget.PRODUCT_DEFINITION}:
         product_manager_agent = agent_factory.create(AgentType.PRODUCT_MANAGER)
@@ -139,6 +149,12 @@ def create_product_planning_crew(
         agents.append(market_and_gtm_agent)
         tasks.append(market_and_gtm_task)
 
+    _wire_same_crew_context(
+        product_definition_task=product_definition_task,
+        requirements_task=requirements_task,
+        market_and_gtm_task=market_and_gtm_task,
+    )
+
     return Crew(
         agents=agents,
         tasks=tasks,
@@ -148,6 +164,41 @@ def create_product_planning_crew(
         memory=False,
         tracing=settings.crewai_tracing_enabled,
     )
+
+
+def _wire_same_crew_context(
+    *,
+    product_definition_task: Task | None,
+    requirements_task: Task | None,
+    market_and_gtm_task: Task | None,
+) -> None:
+    """Wire compact context into every downstream task chained within this Crew.
+
+    Each downstream task factory embeds a placeholder token in its
+    description exactly when it was built with a same-Crew ``*_task``
+    argument (see ``tasks.context_wiring``). This replaces those
+    placeholders with the compact projection of the real completed draft
+    once its source task finishes, instead of leaving CrewAI's native
+    ``context=[task]`` mechanism inject the full raw upstream output.
+    """
+
+    if product_definition_task is not None:
+        for target in (requirements_task, market_and_gtm_task):
+            if target is not None:
+                wire_compact_context(
+                    source_task=product_definition_task,
+                    target_task=target,
+                    placeholder=PRODUCT_DEFINITION_CONTEXT_PLACEHOLDER,
+                    project=ProductDefinitionProjection.from_artifact,
+                )
+
+    if requirements_task is not None and market_and_gtm_task is not None:
+        wire_compact_context(
+            source_task=requirements_task,
+            target_task=market_and_gtm_task,
+            placeholder=REQUIREMENTS_CONTEXT_PLACEHOLDER,
+            project=RequirementsProjection.from_artifact,
+        )
 
 
 def _find_revision(

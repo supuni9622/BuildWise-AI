@@ -33,7 +33,18 @@ from buildwise.domain.review import RevisionRequest
 from buildwise.domain.security import SecurityArchitecture
 from buildwise.domain.specialist_planning import SpecialistExecutionPlan
 from buildwise.domain.technical_planning import TechnicalPlanningResult
+from buildwise.planning.specialist_context import (
+    AIProjection,
+    SecurityProjection,
+    SolutionProjection,
+)
 from buildwise.tasks.ai_architecture import create_ai_architecture_task
+from buildwise.tasks.context_wiring import (
+    AI_CONTEXT_PLACEHOLDER,
+    SECURITY_CONTEXT_PLACEHOLDER,
+    SOLUTION_CONTEXT_PLACEHOLDER,
+    wire_compact_context,
+)
 from buildwise.tasks.qa_evaluation import create_qa_evaluation_task
 from buildwise.tasks.security_architecture import create_security_architecture_task
 from buildwise.tasks.solution_architecture import create_solution_architecture_task
@@ -114,6 +125,7 @@ def create_technical_planning_crew(
     solution_task: Task | None = None
     ai_task: Task | None = None
     security_task: Task | None = None
+    qa_task: Task | None = None
 
     if include_solution:
         solution_agent = agent_factory.create(AgentType.SOLUTION_ARCHITECT)
@@ -199,6 +211,13 @@ def create_technical_planning_crew(
         agents.append(qa_agent)
         tasks.append(qa_task)
 
+    _wire_same_crew_context(
+        solution_task=solution_task,
+        ai_task=ai_task,
+        security_task=security_task,
+        qa_task=qa_task,
+    )
+
     return Crew(
         agents=agents,
         tasks=tasks,
@@ -246,6 +265,52 @@ def _find_revision(
         )
 
     return matches[0]
+
+
+def _wire_same_crew_context(
+    *,
+    solution_task: Task | None,
+    ai_task: Task | None,
+    security_task: Task | None,
+    qa_task: Task | None,
+) -> None:
+    """Wire compact context into every downstream task chained within this Crew.
+
+    Each downstream task factory embeds a placeholder token in its
+    description exactly when it was built with a same-Crew ``*_task``
+    argument (see ``tasks.context_wiring``). This replaces those
+    placeholders with the compact projection of the real completed draft
+    once its source task finishes, instead of leaving CrewAI's native
+    ``context=[task]`` mechanism to inject the full raw upstream output.
+    """
+
+    if solution_task is not None:
+        for target in (ai_task, security_task, qa_task):
+            if target is not None:
+                wire_compact_context(
+                    source_task=solution_task,
+                    target_task=target,
+                    placeholder=SOLUTION_CONTEXT_PLACEHOLDER,
+                    project=SolutionProjection.from_artifact,
+                )
+
+    if ai_task is not None:
+        for target in (security_task, qa_task):
+            if target is not None:
+                wire_compact_context(
+                    source_task=ai_task,
+                    target_task=target,
+                    placeholder=AI_CONTEXT_PLACEHOLDER,
+                    project=AIProjection.from_artifact,
+                )
+
+    if security_task is not None and qa_task is not None:
+        wire_compact_context(
+            source_task=security_task,
+            target_task=qa_task,
+            placeholder=SECURITY_CONTEXT_PLACEHOLDER,
+            project=SecurityProjection.from_artifact,
+        )
 
 
 def assemble_technical_planning_result(

@@ -21,7 +21,9 @@ from typing import Any
 from uuid import UUID
 
 from crewai.tasks.task_output import TaskOutput
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
+
+from buildwise.domain.common import generate_uuid
 
 TaskGuardrail = Callable[[TaskOutput], tuple[bool, Any]]
 
@@ -53,6 +55,99 @@ def require_pydantic_output(
                     f"The task produced '{actual_name}' instead of the "
                     f"required '{model_name}'. Return a schema-valid "
                     f"{model_name}."
+                ),
+            )
+
+        return (True, task_output)
+
+    return _guardrail
+
+
+def require_self_consistent_draft(
+    draft_model: type[BaseModel],
+    canonical_model: type[BaseModel],
+    *,
+    reconcile: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+) -> TaskGuardrail:
+    """Build a guardrail that catches canonical business-rule violations early.
+
+    ``draft_model`` (see ``domain.artifact_drafts._draft_model``) intentionally
+    strips every cross-field ``model_validator``/``field_validator`` so OpenAI
+    structured output only has to satisfy JSON-Schema-expressible constraints.
+    That means a schema-valid draft can still be internally inconsistent in a
+    way the *canonical* model would reject — for example a feature
+    referencing a persona ID that does not exist anywhere else in the same
+    draft.
+
+    This guardrail catches that class of error before it can reach
+    deterministic assembly (which runs outside any CrewAI Task/guardrail
+    context and has no retry mechanism). It builds the canonical model using
+    the draft's own data plus placeholder ownership metadata — never used for
+    anything beyond this check — and turns any resulting ``ValidationError``
+    into guardrail feedback so CrewAI's retry loop can ask the agent to fix it.
+
+    Only validates rules the canonical model can check using the draft's own
+    fields. Ownership rules that require a *different* artifact (for example
+    ``RequirementsSpecification.validate_product_ownership`` against the real
+    ``ProductDefinition``) still run later, once assembly has the real
+    upstream artifact.
+
+    Args:
+        reconcile: Optional transform applied to the draft's dumped payload
+            before validation, mirroring any equivalent transform the real
+            ``assemble_*`` function applies (for example
+            ``reconcile_product_definition_scope``). Without this, the
+            guardrail would reject a draft for a field the application
+            derives deterministically anyway, wasting a retry on something
+            that was never going to be a real problem. Must unconditionally
+            populate whichever fields it's responsible for, even given an
+            empty payload — it is probed once with ``{}`` at construction
+            time to determine which required fields it covers, so those are
+            exempt from the placeholder-strategy check below.
+    """
+
+    reconciled_probe = reconcile({}) if reconcile is not None else {}
+    missing_fields = set(canonical_model.model_fields) - set(draft_model.model_fields)
+    required_placeholder_fields = [
+        field_name
+        for field_name in missing_fields
+        if canonical_model.model_fields[field_name].is_required()
+        and field_name not in reconciled_probe
+    ]
+
+    for field_name in required_placeholder_fields:
+        annotation = canonical_model.model_fields[field_name].annotation
+        if annotation is not UUID:
+            raise TypeError(
+                "require_self_consistent_draft has no placeholder strategy "
+                f"for required field '{field_name}' of type {annotation!r} "
+                f"on {canonical_model.__name__}. Extend the placeholder "
+                "strategy or omit this guardrail for that task."
+            )
+
+    def _guardrail(task_output: TaskOutput) -> tuple[bool, Any]:
+        draft = task_output.pydantic
+
+        if not isinstance(draft, draft_model):
+            # require_pydantic_output already reports this failure; avoid
+            # duplicating it here.
+            return (True, task_output)
+
+        payload = draft.model_dump(mode="python")
+        if reconcile is not None:
+            payload = reconcile(payload)
+        for field_name in required_placeholder_fields:
+            payload[field_name] = generate_uuid()
+
+        try:
+            canonical_model.model_validate(payload)
+        except ValidationError as exc:
+            return (
+                False,
+                (
+                    f"{canonical_model.__name__} would fail validation once "
+                    f"assembled: {exc}. Fix the underlying business rule "
+                    "before returning the final answer."
                 ),
             )
 

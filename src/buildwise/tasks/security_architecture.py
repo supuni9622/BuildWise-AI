@@ -24,7 +24,12 @@ from buildwise.domain.enums import RiskLikelihood, RiskSeverity
 from buildwise.domain.requirements import RequirementsSpecification
 from buildwise.domain.review import RevisionRequest
 from buildwise.domain.security import SecurityArchitecture
-from buildwise.planning.specialist_context import SecurityArchitectContext
+from buildwise.planning.specialist_context import (
+    AIProjection,
+    RequirementsProjection,
+    SecurityArchitectContext,
+)
+from buildwise.tasks.context_wiring import AI_CONTEXT_PLACEHOLDER, SOLUTION_CONTEXT_PLACEHOLDER
 from buildwise.tasks.guardrails import compose_guardrails, require_pydantic_output
 from buildwise.tasks.revisions import format_revision_instructions
 
@@ -96,11 +101,12 @@ def create_security_architecture_task(
         )
 
     context_lines: list[str] = []
-    context_tasks: list[Task] = []
 
     if solution_architecture_task is not None:
-        context_lines.append("SolutionArchitecture: provided as native task context.")
-        context_tasks.append(solution_architecture_task)
+        context_lines.append(
+            f"Requirements: {RequirementsProjection.from_artifact(requirements).model_dump_json()}"
+        )
+        context_lines.append(f"SolutionArchitecture: {SOLUTION_CONTEXT_PLACEHOLDER}")
     else:
         context_lines.append(
             SecurityArchitectContext.build(
@@ -111,10 +117,11 @@ def create_security_architecture_task(
         )
 
     if ai_architecture_task is not None:
-        context_lines.append("AIArchitecture: provided as native task context.")
-        context_tasks.append(ai_architecture_task)
+        context_lines.append(f"AIArchitecture: {AI_CONTEXT_PLACEHOLDER}")
     elif ai_architecture is not None and solution_architecture_task is not None:
-        context_lines.append(f"AIArchitecture: {ai_architecture.model_dump_json()}")
+        context_lines.append(
+            f"AIArchitecture: {AIProjection.from_artifact(ai_architecture).model_dump_json()}"
+        )
 
     description = (
         "Objective: Design the security architecture for the approved "
@@ -171,10 +178,12 @@ def create_security_architecture_task(
         "output_pydantic": SecurityArchitecture,
         "guardrails": guardrails,
         "guardrail_max_retries": guardrail_max_retries,
+        # See tasks/context_wiring.py: context is always fully embedded in
+        # description above, so this must be an explicit [], not left
+        # unset, or CrewAI's NOT_SPECIFIED default injects raw output from
+        # every other task the Crew has run so far.
+        "context": [],
     }
-
-    if context_tasks:
-        task_kwargs["context"] = context_tasks
 
     return Task(**task_kwargs)
 

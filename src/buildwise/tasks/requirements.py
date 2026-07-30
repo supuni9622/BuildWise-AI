@@ -11,10 +11,21 @@ from __future__ import annotations
 
 from crewai import Agent, Task
 
-from buildwise.domain.artifact_drafts import RequirementsSpecificationDraft
+from buildwise.domain.artifact_drafts import (
+    RequirementsSpecificationDraft,
+    reconcile_requirements_specification_narratives,
+)
 from buildwise.domain.product import ProductDefinition
+from buildwise.domain.requirements import RequirementsSpecification
 from buildwise.domain.review import RevisionRequest
-from buildwise.tasks.guardrails import compose_guardrails, require_pydantic_output
+from buildwise.planning.specialist_context import ProductDefinitionProjection
+from buildwise.tasks.context_wiring import PRODUCT_DEFINITION_CONTEXT_PLACEHOLDER
+from buildwise.tasks.guardrails import (
+    compose_guardrails,
+    require_pydantic_output,
+    require_self_consistent_draft,
+)
+from buildwise.tasks.instructions import IDENTIFIER_RULES
 from buildwise.tasks.revisions import format_revision_instructions
 
 DEFAULT_GUARDRAIL_MAX_RETRIES = 2
@@ -67,11 +78,13 @@ def create_requirements_task(
         )
 
     context_section = (
-        "Available structured context: the completed Product Definition "
-        "task output is provided as native task context."
+        "Available structured context:\n"
+        f"ProductDefinition: {PRODUCT_DEFINITION_CONTEXT_PLACEHOLDER}"
         if product_definition_task is not None
         else (
-            f"Available structured context:\n{product_definition.model_dump_json()}"  # type: ignore[union-attr]
+            "Available structured context:\n"
+            "ProductDefinition: "
+            f"{ProductDefinitionProjection.from_artifact(product_definition).model_dump_json()}"  # type: ignore[arg-type]
         )
     )
 
@@ -92,6 +105,7 @@ def create_requirements_task(
         "Required output: A schema-valid RequirementsSpecificationDraft with "
         "every reference (feature, persona, goal, requirement) resolving to "
         "an identifier that actually exists in the supplied context.\n\n"
+        f"{IDENTIFIER_RULES}\n"
         "Do not emit top-level ownership, timestamps, or source metadata; "
         "the application adds them deterministically.\n\n"
         "Important boundaries:\n"
@@ -113,7 +127,14 @@ def create_requirements_task(
         "additional prose."
     )
 
-    guardrails = compose_guardrails(require_pydantic_output(RequirementsSpecificationDraft))
+    guardrails = compose_guardrails(
+        require_pydantic_output(RequirementsSpecificationDraft),
+        require_self_consistent_draft(
+            RequirementsSpecificationDraft,
+            RequirementsSpecification,
+            reconcile=reconcile_requirements_specification_narratives,
+        ),
+    )
 
     task_kwargs: dict[str, object] = {
         "name": "requirements_specification",
@@ -123,9 +144,12 @@ def create_requirements_task(
         "output_pydantic": RequirementsSpecificationDraft,
         "guardrails": guardrails,
         "guardrail_max_retries": guardrail_max_retries,
+        # Context is always fully embedded in description above (either the
+        # placeholder resolved via wire_compact_context, or the projection
+        # dumped directly). An explicit [] stops CrewAI's NOT_SPECIFIED
+        # default from also injecting raw output from every other task the
+        # Crew has run so far; see tasks/context_wiring.py.
+        "context": [],
     }
-
-    if product_definition_task is not None:
-        task_kwargs["context"] = [product_definition_task]
 
     return Task(**task_kwargs)

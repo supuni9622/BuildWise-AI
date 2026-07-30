@@ -17,10 +17,24 @@ from __future__ import annotations
 from crewai import Agent, Task
 
 from buildwise.domain.artifact_drafts import MarketAndGTMStrategyDraft
+from buildwise.domain.market_and_gtm import MarketAndGTMStrategy
 from buildwise.domain.product import ProductDefinition
 from buildwise.domain.requirements import RequirementsSpecification
 from buildwise.domain.review import RevisionRequest
-from buildwise.tasks.guardrails import compose_guardrails, require_pydantic_output
+from buildwise.planning.specialist_context import (
+    ProductDefinitionProjection,
+    RequirementsProjection,
+)
+from buildwise.tasks.context_wiring import (
+    PRODUCT_DEFINITION_CONTEXT_PLACEHOLDER,
+    REQUIREMENTS_CONTEXT_PLACEHOLDER,
+)
+from buildwise.tasks.guardrails import (
+    compose_guardrails,
+    require_pydantic_output,
+    require_self_consistent_draft,
+)
+from buildwise.tasks.instructions import IDENTIFIER_RULES
 from buildwise.tasks.revisions import format_revision_instructions
 
 DEFAULT_GUARDRAIL_MAX_RETRIES = 2
@@ -101,13 +115,16 @@ def create_market_and_gtm_task(
         )
 
     context_section = (
-        "Available structured context: the completed Product Definition and "
-        "Requirements task outputs are provided as native task context."
+        "Available structured context:\n"
+        f"ProductDefinition: {PRODUCT_DEFINITION_CONTEXT_PLACEHOLDER}\n"
+        f"RequirementsSpecification: {REQUIREMENTS_CONTEXT_PLACEHOLDER}"
         if same_crew_mode
         else (
             "Available structured context:\n"
-            f"ProductDefinition: {product_definition.model_dump_json()}\n"  # type: ignore[union-attr]
-            f"RequirementsSpecification: {requirements.model_dump_json()}"  # type: ignore[union-attr]
+            "ProductDefinition: "
+            f"{ProductDefinitionProjection.from_artifact(product_definition).model_dump_json()}\n"  # type: ignore[arg-type]
+            "RequirementsSpecification: "
+            f"{RequirementsProjection.from_artifact(requirements).model_dump_json()}"  # type: ignore[arg-type]
         )
     )
 
@@ -128,6 +145,7 @@ def create_market_and_gtm_task(
         "Required output: A schema-valid MarketAndGTMStrategyDraft where every claim "
         "not directly derivable from the supplied product definition and "
         "requirements is backed by an evidence entry.\n\n"
+        f"{IDENTIFIER_RULES}\n"
         "Important boundaries:\n"
         "- Do not redefine ProductDefinition scope, personas, or features.\n"
         "- Do not select software architecture or technology.\n"
@@ -151,7 +169,10 @@ def create_market_and_gtm_task(
         "prose."
     )
 
-    guardrails = compose_guardrails(require_pydantic_output(MarketAndGTMStrategyDraft))
+    guardrails = compose_guardrails(
+        require_pydantic_output(MarketAndGTMStrategyDraft),
+        require_self_consistent_draft(MarketAndGTMStrategyDraft, MarketAndGTMStrategy),
+    )
 
     task_kwargs: dict[str, object] = {
         "name": "market_and_gtm_strategy",
@@ -161,9 +182,11 @@ def create_market_and_gtm_task(
         "output_pydantic": MarketAndGTMStrategyDraft,
         "guardrails": guardrails,
         "guardrail_max_retries": guardrail_max_retries,
+        # See tasks/context_wiring.py: context is always fully embedded in
+        # description above, so this must be an explicit [], not left
+        # unset, or CrewAI's NOT_SPECIFIED default injects raw output from
+        # every other task the Crew has run so far.
+        "context": [],
     }
-
-    if same_crew_mode:
-        task_kwargs["context"] = [product_definition_task, requirements_task]
 
     return Task(**task_kwargs)

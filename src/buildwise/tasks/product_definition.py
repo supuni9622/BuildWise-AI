@@ -10,10 +10,20 @@ from __future__ import annotations
 
 from crewai import Agent, Task
 
-from buildwise.domain.artifact_drafts import ProductDefinitionDraft
+from buildwise.domain.artifact_drafts import (
+    ProductDefinitionDraft,
+    reconcile_product_definition_scope,
+)
 from buildwise.domain.discovery import DiscoveryResult
+from buildwise.domain.product import ProductDefinition
 from buildwise.domain.review import RevisionRequest
-from buildwise.tasks.guardrails import compose_guardrails, require_pydantic_output
+from buildwise.planning.specialist_context import DiscoveryProjection
+from buildwise.tasks.guardrails import (
+    compose_guardrails,
+    require_pydantic_output,
+    require_self_consistent_draft,
+)
+from buildwise.tasks.instructions import IDENTIFIER_RULES
 from buildwise.tasks.revisions import format_revision_instructions
 
 DEFAULT_GUARDRAIL_MAX_RETRIES = 2
@@ -71,7 +81,8 @@ def create_product_definition_task(
         "is provided as native task context."
         if discovery_task is not None
         else (
-            f"Available structured context:\n{discovery_result.model_dump_json()}"  # type: ignore[union-attr]
+            "Available structured context:\n"
+            f"{DiscoveryProjection.from_artifact(discovery_result).model_dump_json()}"  # type: ignore[arg-type]
         )
     )
 
@@ -92,16 +103,7 @@ def create_product_definition_task(
         "or open questions carried forward from Discovery.\n\n"
         "Required output: A schema-valid ProductDefinitionDraft. The "
         "application adds artifact ownership and provenance metadata.\n\n"
-        "Identifier rules:\n"
-        "- Every id and every value in an *_id or *_ids reference field must "
-        "be a complete RFC 4122 UUID string (for example, "
-        "'6ba7b810-9dad-11d1-80b4-00c04fd430c8').\n"
-        "- Do not emit labels such as 'goal-001', 'persona-001', or "
-        "'feature-001' as identifiers.\n"
-        "- Reuse the exact generated UUID when another field references that "
-        "artifact; do not generate a different UUID for the reference.\n"
-        "- Reference dependencies by artifact UUID, never by feature or "
-        "roadmap name, and never repeat an ID within the same list.\n"
+        f"{IDENTIFIER_RULES}"
         "- Do not emit top-level id, session_id, discovery_result_id, "
         "source_metadata, or generated_at fields.\n\n"
         "Risk acceptance rules:\n"
@@ -129,7 +131,14 @@ def create_product_definition_task(
         "prose."
     )
 
-    guardrails = compose_guardrails(require_pydantic_output(ProductDefinitionDraft))
+    guardrails = compose_guardrails(
+        require_pydantic_output(ProductDefinitionDraft),
+        require_self_consistent_draft(
+            ProductDefinitionDraft,
+            ProductDefinition,
+            reconcile=reconcile_product_definition_scope,
+        ),
+    )
 
     task_kwargs: dict[str, object] = {
         "name": "product_definition",

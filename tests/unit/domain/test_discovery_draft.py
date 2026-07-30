@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from openai.lib._pydantic import to_strict_json_schema
 
 from buildwise.domain.common import generate_uuid
@@ -144,3 +145,36 @@ def test_discovery_draft_strict_schema_is_materially_smaller() -> None:
     result_schema = json.dumps(to_strict_json_schema(DiscoveryResult))
 
     assert len(draft_schema) < len(result_schema) * 0.7
+
+
+def test_clarification_question_referencing_missing_unknown_key_builds_at_draft_level() -> None:
+    """Reproduces a live-run failure: a clarification question referenced an
+    unknown key that did not exist anywhere in ``unknowns``.
+    ``DiscoveryDraft`` used to enforce this itself (a hand-written
+    equivalent of the business-rule validators ``_draft_model`` strips for
+    every other artifact), so it crashed at raw parse time with zero
+    guardrail retries. ``DiscoveryResult.validate_discovery_result``
+    (canonical) already enforces the same rule, by ID, once
+    ``assemble_discovery_result`` runs — so the draft must build
+    successfully even with a dangling reference, and assembly must still
+    catch it.
+    """
+
+    draft = _draft(blocking=True).model_copy(
+        update={
+            "clarification_questions": _draft(blocking=True).clarification_questions.model_copy(
+                update={
+                    "questions": [
+                        _draft(blocking=True)
+                        .clarification_questions.questions[0]
+                        .model_copy(update={"related_unknown_keys": ["nonexistent_key"]})
+                    ]
+                }
+            )
+        }
+    )
+
+    assert draft.clarification_questions.questions[0].related_unknown_keys == ["nonexistent_key"]
+
+    with pytest.raises(ValueError, match="nonexistent_key"):
+        assemble_discovery_result(draft, session_id=generate_uuid(), product_idea=_idea())

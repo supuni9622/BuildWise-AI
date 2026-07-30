@@ -8,7 +8,10 @@ metadata and derives redundant routing fields deterministically.
 
 from __future__ import annotations
 
+from typing import Any
+
 from crewai import Agent, Task
+from crewai.tasks.task_output import TaskOutput
 
 from buildwise.domain.common import SessionId
 from buildwise.domain.discovery import DiscoveryRefinement, DiscoveryResult
@@ -17,6 +20,106 @@ from buildwise.domain.intake import ProductIdeaContext, ProductIdeaRequest
 from buildwise.tasks.guardrails import compose_guardrails, require_pydantic_output
 
 DEFAULT_GUARDRAIL_MAX_RETRIES = 2
+
+
+def _validate_discovery_semantic_consistency(task_output: TaskOutput) -> tuple[bool, Any]:
+    """Re-check the cross-field business rules ``discovery_draft.py`` no
+    longer enforces at parse time (see the docstrings on ``AssumptionDraft``,
+    ``UnknownDraft``, ``ClarificationQuestionDraft``, and ``DiscoveryDraft``
+    itself). Those checks moved here so a violation becomes retryable
+    guardrail feedback instead of a raw parse-time crash — the same
+    reasoning as ``require_self_consistent_draft``, applied by hand because
+    this draft predates that shared mechanism and has a different shape
+    than the 5 artifacts it covers.
+    """
+
+    draft = task_output.pydantic
+
+    if not isinstance(draft, DiscoveryDraft):
+        return (True, task_output)
+
+    for assumption in draft.assumptions:
+        if assumption.requires_validation and assumption.validation_question is None:
+            return (
+                False,
+                (
+                    f"Assumption '{assumption.key}' has requires_validation=true "
+                    "but no validation_question. Provide one, or set "
+                    "requires_validation=false."
+                ),
+            )
+        if not assumption.requires_validation and assumption.validation_question is not None:
+            return (
+                False,
+                (
+                    f"Assumption '{assumption.key}' has requires_validation=false "
+                    "but still provides a validation_question. Remove it, or set "
+                    "requires_validation=true."
+                ),
+            )
+
+    for unknown in draft.unknowns:
+        if unknown.can_proceed_with_assumption and unknown.recommended_assumption is None:
+            return (
+                False,
+                (
+                    f"Unknown '{unknown.key}' has can_proceed_with_assumption=true "
+                    "but no recommended_assumption. Provide one, or set "
+                    "can_proceed_with_assumption=false."
+                ),
+            )
+        if not unknown.can_proceed_with_assumption and unknown.recommended_assumption is not None:
+            return (
+                False,
+                (
+                    f"Unknown '{unknown.key}' has can_proceed_with_assumption=false "
+                    "but still provides a recommended_assumption. Remove it, or set "
+                    "can_proceed_with_assumption=true."
+                ),
+            )
+
+    unknown_keys = [unknown.key for unknown in draft.unknowns]
+    if len(unknown_keys) != len(set(unknown_keys)):
+        return (False, "Unknown keys must be unique.")
+
+    fact_keys = {fact.key for fact in draft.known_facts}
+    assumption_keys = {assumption.key for assumption in draft.assumptions}
+    if overlap := fact_keys.intersection(assumption_keys):
+        return (
+            False,
+            "A key cannot be both a known fact and an assumption: " + ", ".join(sorted(overlap)),
+        )
+
+    if draft.clarification_questions is not None:
+        for question in draft.clarification_questions.questions:
+            is_choice = question.question_type in {"single_choice", "multiple_choice"}
+            if is_choice and len(question.options) < 2:
+                return (
+                    False,
+                    f"Clarification question '{question.key}' is a choice question "
+                    "but has fewer than two options.",
+                )
+            if not is_choice and (question.options or question.allow_other):
+                return (
+                    False,
+                    f"Clarification question '{question.key}' is not a choice "
+                    "question but sets options or allow_other.",
+                )
+
+        referenced = {
+            key
+            for question in draft.clarification_questions.questions
+            for key in question.related_unknown_keys
+        }
+        missing = referenced.difference(unknown_keys)
+        if missing:
+            return (
+                False,
+                "Clarification questions reference unknown keys that do not "
+                "exist in unknowns: " + ", ".join(sorted(missing)),
+            )
+
+    return (True, task_output)
 
 
 def create_discovery_task(
@@ -106,7 +209,10 @@ def create_discovery_task(
         "DiscoveryDraft Pydantic model exactly, with no additional prose."
     )
 
-    guardrails = compose_guardrails(require_pydantic_output(DiscoveryDraft))
+    guardrails = compose_guardrails(
+        require_pydantic_output(DiscoveryDraft),
+        _validate_discovery_semantic_consistency,
+    )
 
     return Task(
         name="product_discovery",

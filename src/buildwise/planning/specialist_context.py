@@ -20,6 +20,16 @@ from buildwise.domain.architecture import (
     SolutionArchitecture,
 )
 from buildwise.domain.common import ArtifactId, BuildWiseModel, MediumText
+from buildwise.domain.discovery import (
+    Assumption,
+    CapabilityClassification,
+    DiscoveryResult,
+    DiscoveryRisk,
+    KnownFact,
+    Unknown,
+)
+from buildwise.domain.intake import ProductIdeaContext
+from buildwise.domain.product import ProductDefinition, ProductFeature, ProductGoal, UserPersona
 from buildwise.domain.qa import QAEvaluationPlan
 from buildwise.domain.requirements import (
     DataRequirement,
@@ -37,10 +47,79 @@ from buildwise.domain.security import (
 )
 
 
-class RequirementsProjection(BuildWiseModel):
-    """Requirements fields needed for technical design and traceability."""
+class DiscoveryProjection(BuildWiseModel):
+    """Discovery fields needed to write a product definition.
 
-    id: ArtifactId
+    Drops Discovery's own routing/audit metadata (``id``, ``session_id``,
+    ``source_metadata``, ``discovered_at``, ``completeness``,
+    ``recommended_next_step``, ``confidence``/``confidence_score``,
+    ``clarification_questions``) — those govern the Discovery stage itself,
+    not what the Product Manager should build.
+    """
+
+    idea_context: ProductIdeaContext
+    summary: str
+    problem_interpretation: str
+    target_user_interpretation: str
+    desired_outcome_interpretation: str
+    known_facts: list[KnownFact] = Field(default_factory=list)
+    assumptions: list[Assumption] = Field(default_factory=list)
+    unknowns: list[Unknown] = Field(default_factory=list)
+    risks: list[DiscoveryRisk] = Field(default_factory=list)
+    capability_classification: CapabilityClassification
+    limitations: list[MediumText] = Field(default_factory=list)
+
+    @classmethod
+    def from_artifact(cls, discovery: DiscoveryResult) -> DiscoveryProjection:
+        return cls.model_validate(
+            discovery.model_dump(include=set(cls.model_fields), mode="python")
+        )
+
+
+class ProductDefinitionProjection(BuildWiseModel):
+    """Product Definition fields needed to write requirements or GTM strategy.
+
+    Drops ownership/audit metadata (``id``, ``session_id``,
+    ``discovery_result_id``, ``source_metadata``, ``generated_at``,
+    ``confidence``/``confidence_score``, ``decision``,
+    ``decision_rationale``) plus roadmap, risk, and cost fields that neither
+    downstream task acts on — those govern the Product Definition stage
+    itself and product-owned cost tracking, not requirements or GTM content.
+    """
+
+    product_name: str
+    vision: str
+    value_proposition: str
+    problem_statement: str
+    target_market_summary: str | None = None
+    goals: list[ProductGoal] = Field(default_factory=list)
+    personas: list[UserPersona] = Field(default_factory=list)
+    features: list[ProductFeature] = Field(default_factory=list)
+    mvp_feature_ids: list[ArtifactId] = Field(default_factory=list)
+    out_of_scope_feature_ids: list[ArtifactId] = Field(default_factory=list)
+    product_principles: list[MediumText] = Field(default_factory=list)
+    assumptions: list[MediumText] = Field(default_factory=list)
+    constraints: list[MediumText] = Field(default_factory=list)
+    limitations: list[MediumText] = Field(default_factory=list)
+
+    @classmethod
+    def from_artifact(cls, product_definition: ProductDefinition) -> ProductDefinitionProjection:
+        return cls.model_validate(
+            product_definition.model_dump(include=set(cls.model_fields), mode="python")
+        )
+
+
+class RequirementsProjection(BuildWiseModel):
+    """Requirements fields needed for technical design and traceability.
+
+    ``id`` is optional for the same reason as on ``SolutionProjection``:
+    this is sometimes projected from a ``RequirementsSpecificationDraft``
+    produced earlier in the same Crew run (Product Planning's Market and
+    GTM task consuming Requirements), before ownership metadata is
+    assembled.
+    """
+
+    id: ArtifactId | None = None
     title: str
     summary: str
     scope: str
@@ -64,10 +143,16 @@ class RequirementsProjection(BuildWiseModel):
 
 
 class SolutionProjection(BuildWiseModel):
-    """Solution fields needed by downstream AI, security, and QA specialists."""
+    """Solution fields needed by downstream AI, security, and QA specialists.
 
-    id: ArtifactId
-    requirements_specification_id: ArtifactId
+    ``id``/``requirements_specification_id`` are optional because this is
+    sometimes projected from a ``SolutionArchitectureDraft`` produced earlier
+    in the same Crew run, before ownership metadata is assembled. Neither
+    field is used for anything beyond informational context in the prompt.
+    """
+
+    id: ArtifactId | None = None
+    requirements_specification_id: ArtifactId | None = None
     architecture_style: str
     architecture_style_rationale: str
     components: list[ArchitectureComponent] = Field(default_factory=list)
@@ -89,11 +174,17 @@ class SolutionProjection(BuildWiseModel):
 
 
 class AIProjection(BuildWiseModel):
-    """AI data flows, controls, and evaluation fields needed downstream."""
+    """AI data flows, controls, and evaluation fields needed downstream.
 
-    id: ArtifactId
-    requirements_specification_id: ArtifactId
-    solution_architecture_id: ArtifactId
+    ``id``/``requirements_specification_id``/``solution_architecture_id`` are
+    optional for the same reason as on ``SolutionProjection``: this is
+    sometimes projected from an ``AIArchitectureDraft`` produced earlier in
+    the same Crew run, before ownership metadata is assembled.
+    """
+
+    id: ArtifactId | None = None
+    requirements_specification_id: ArtifactId | None = None
+    solution_architecture_id: ArtifactId | None = None
     capabilities: list[AICapability] = Field(default_factory=list)
     tool_policies: list[AIToolPolicy] = Field(default_factory=list)
     agent_workflows: list[AgentWorkflow] = Field(default_factory=list)

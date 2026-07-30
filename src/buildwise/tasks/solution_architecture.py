@@ -9,11 +9,17 @@ from __future__ import annotations
 
 from crewai import Agent, Task
 
+from buildwise.domain.architecture import SolutionArchitecture
 from buildwise.domain.artifact_drafts import SolutionArchitectureDraft
 from buildwise.domain.requirements import RequirementsSpecification
 from buildwise.domain.review import RevisionRequest
 from buildwise.planning.specialist_context import SolutionArchitectContext
-from buildwise.tasks.guardrails import compose_guardrails, require_pydantic_output
+from buildwise.tasks.guardrails import (
+    compose_guardrails,
+    require_pydantic_output,
+    require_self_consistent_draft,
+)
+from buildwise.tasks.instructions import IDENTIFIER_RULES
 from buildwise.tasks.revisions import format_revision_instructions
 
 DEFAULT_GUARDRAIL_MAX_RETRIES = 2
@@ -69,6 +75,7 @@ def create_solution_architecture_task(
         "Required output: A schema-valid SolutionArchitectureDraft "
         "with every must-have functional requirement mapped to at least one "
         "component.\n\n"
+        f"{IDENTIFIER_RULES}\n"
         "Important boundaries:\n"
         "- Do not select AI models, design prompts, or define RAG.\n"
         "- Do not produce a full security architecture or QA strategy; "
@@ -90,7 +97,10 @@ def create_solution_architecture_task(
         "prose."
     )
 
-    guardrails = compose_guardrails(require_pydantic_output(SolutionArchitectureDraft))
+    guardrails = compose_guardrails(
+        require_pydantic_output(SolutionArchitectureDraft),
+        require_self_consistent_draft(SolutionArchitectureDraft, SolutionArchitecture),
+    )
 
     return Task(
         name="solution_architecture",

@@ -18,6 +18,7 @@ from buildwise.application.cost_aggregator import ProjectCostAggregator
 from buildwise.application.error_normalizer import normalize_session_error
 from buildwise.application.runtime_budget import (
     RuntimeBudgetController,
+    RuntimeBudgetExceeded,
     runtime_budget_scope,
 )
 from buildwise.application.usage_aggregator import UsageAggregator
@@ -48,6 +49,7 @@ from buildwise.domain.enums import (
     SessionStatus,
     SpecialistType,
 )
+from buildwise.domain.exceptions import CrewExecutionError
 from buildwise.domain.intake import ClarificationAnswer, ProductIdeaContext
 from buildwise.domain.product_planning import ProductPlanningResult
 from buildwise.domain.requirements import RequirementsSpecification
@@ -77,6 +79,7 @@ from buildwise.reporting.storage import (
     BlueprintReportStorage,
     create_blueprint_report_storage,
 )
+from buildwise.tools.sanitizer import ToolExecutionError
 from buildwise.validation.final_output_validator import validate_final_output
 from buildwise.validation.output_validator import validate_output
 
@@ -739,7 +742,17 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
         budget.require_crew_capacity(agent_executions=agent_execution_count)
         started_at = perf_counter()
         with runtime_budget_scope(budget):
-            output = crew.kickoff()
+            try:
+                output = crew.kickoff()
+            except (RuntimeBudgetExceeded, ToolExecutionError):
+                raise
+            except Exception as error:
+                logger.exception(
+                    "crew_kickoff_failed",
+                    stage=stage,
+                    consultation_id=str(self.state.session_id),
+                )
+                raise CrewExecutionError(stage=stage) from error
         duration_ms = round((perf_counter() - started_at) * 1000)
         if not isinstance(output, CrewOutput):
             raise TypeError("BuildWise Crews must use non-streaming CrewOutput.")

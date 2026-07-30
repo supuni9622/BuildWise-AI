@@ -15,12 +15,19 @@ from __future__ import annotations
 
 from crewai import Agent, Task
 
+from buildwise.domain.ai_architecture import AIArchitecture
 from buildwise.domain.architecture import SolutionArchitecture
 from buildwise.domain.artifact_drafts import AIArchitectureDraft
 from buildwise.domain.requirements import RequirementsSpecification
 from buildwise.domain.review import RevisionRequest
-from buildwise.planning.specialist_context import AIArchitectContext
-from buildwise.tasks.guardrails import compose_guardrails, require_pydantic_output
+from buildwise.planning.specialist_context import AIArchitectContext, RequirementsProjection
+from buildwise.tasks.context_wiring import SOLUTION_CONTEXT_PLACEHOLDER
+from buildwise.tasks.guardrails import (
+    compose_guardrails,
+    require_pydantic_output,
+    require_self_consistent_draft,
+)
+from buildwise.tasks.instructions import IDENTIFIER_RULES
 from buildwise.tasks.revisions import format_revision_instructions
 
 DEFAULT_GUARDRAIL_MAX_RETRIES = 2
@@ -77,8 +84,8 @@ def create_ai_architecture_task(
         )
 
     architecture_section = (
-        "Available structured context: the completed Solution Architecture "
-        "task output is provided as native task context."
+        f"Requirements: {RequirementsProjection.from_artifact(requirements).model_dump_json()}\n"
+        f"SolutionArchitecture: {SOLUTION_CONTEXT_PLACEHOLDER}"
         if solution_architecture_task is not None
         else AIArchitectContext.build(
             requirements,
@@ -109,6 +116,7 @@ def create_ai_architecture_task(
         "Required output: A schema-valid AIArchitectureDraft where every "
         "AI capability has both model-requirement coverage and evaluation "
         "coverage.\n\n"
+        f"{IDENTIFIER_RULES}\n"
         "Important boundaries:\n"
         "- Do not redefine general application components, deployment "
         "topology, or non-AI technology choices; those belong to "
@@ -128,7 +136,10 @@ def create_ai_architecture_task(
         "draft model exactly, with no additional prose."
     )
 
-    guardrails = compose_guardrails(require_pydantic_output(AIArchitectureDraft))
+    guardrails = compose_guardrails(
+        require_pydantic_output(AIArchitectureDraft),
+        require_self_consistent_draft(AIArchitectureDraft, AIArchitecture),
+    )
 
     task_kwargs: dict[str, object] = {
         "name": "ai_architecture",
@@ -138,9 +149,11 @@ def create_ai_architecture_task(
         "output_pydantic": AIArchitectureDraft,
         "guardrails": guardrails,
         "guardrail_max_retries": guardrail_max_retries,
+        # See tasks/context_wiring.py: context is always fully embedded in
+        # description above, so this must be an explicit [], not left
+        # unset, or CrewAI's NOT_SPECIFIED default injects raw output from
+        # every other task the Crew has run so far.
+        "context": [],
     }
-
-    if solution_architecture_task is not None:
-        task_kwargs["context"] = [solution_architecture_task]
 
     return Task(**task_kwargs)

@@ -21,7 +21,17 @@ from buildwise.domain.qa import QAEvaluationPlan
 from buildwise.domain.requirements import RequirementsSpecification
 from buildwise.domain.review import RevisionRequest
 from buildwise.domain.security import SecurityArchitecture
-from buildwise.planning.specialist_context import QAArchitectContext
+from buildwise.planning.specialist_context import (
+    AIProjection,
+    QAArchitectContext,
+    RequirementsProjection,
+    SecurityProjection,
+)
+from buildwise.tasks.context_wiring import (
+    AI_CONTEXT_PLACEHOLDER,
+    SECURITY_CONTEXT_PLACEHOLDER,
+    SOLUTION_CONTEXT_PLACEHOLDER,
+)
 from buildwise.tasks.guardrails import (
     compose_guardrails,
     require_non_empty_collections,
@@ -110,11 +120,12 @@ def create_qa_evaluation_task(
         )
 
     context_lines: list[str] = []
-    context_tasks: list[Task] = []
 
     if solution_architecture_task is not None:
-        context_lines.append("SolutionArchitecture: provided as native task context.")
-        context_tasks.append(solution_architecture_task)
+        context_lines.append(
+            f"Requirements: {RequirementsProjection.from_artifact(requirements).model_dump_json()}"
+        )
+        context_lines.append(f"SolutionArchitecture: {SOLUTION_CONTEXT_PLACEHOLDER}")
     else:
         context_lines.append(
             QAArchitectContext.build(
@@ -129,16 +140,19 @@ def create_qa_evaluation_task(
     security_selected = security_architecture_task is not None or security_architecture is not None
 
     if ai_architecture_task is not None:
-        context_lines.append("AIArchitecture: provided as native task context.")
-        context_tasks.append(ai_architecture_task)
+        context_lines.append(f"AIArchitecture: {AI_CONTEXT_PLACEHOLDER}")
     elif ai_architecture is not None and solution_architecture_task is not None:
-        context_lines.append(f"AIArchitecture: {ai_architecture.model_dump_json()}")
+        context_lines.append(
+            f"AIArchitecture: {AIProjection.from_artifact(ai_architecture).model_dump_json()}"
+        )
 
     if security_architecture_task is not None:
-        context_lines.append("SecurityArchitecture: provided as native task context.")
-        context_tasks.append(security_architecture_task)
+        context_lines.append(f"SecurityArchitecture: {SECURITY_CONTEXT_PLACEHOLDER}")
     elif security_architecture is not None and solution_architecture_task is not None:
-        context_lines.append(f"SecurityArchitecture: {security_architecture.model_dump_json()}")
+        context_lines.append(
+            "SecurityArchitecture: "
+            f"{SecurityProjection.from_artifact(security_architecture).model_dump_json()}"
+        )
 
     ai_instruction = (
         "- Define AI evaluation coverage (accuracy, groundedness, safety, or "
@@ -207,9 +221,11 @@ def create_qa_evaluation_task(
         "output_pydantic": QAEvaluationPlan,
         "guardrails": guardrails,
         "guardrail_max_retries": guardrail_max_retries,
+        # See tasks/context_wiring.py: context is always fully embedded in
+        # description above, so this must be an explicit [], not left
+        # unset, or CrewAI's NOT_SPECIFIED default injects raw output from
+        # every other task the Crew has run so far.
+        "context": [],
     }
-
-    if context_tasks:
-        task_kwargs["context"] = context_tasks
 
     return Task(**task_kwargs)

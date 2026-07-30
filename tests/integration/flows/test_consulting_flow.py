@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from crewai import CrewOutput
@@ -12,6 +12,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 import buildwise.flows.consulting_flow as flow_module
+from buildwise.application.runtime_budget import RuntimeBudgetExceeded
 from buildwise.config.settings import Settings
 from buildwise.domain.architecture import SolutionArchitecture
 from buildwise.domain.blueprint import ProductBlueprint
@@ -24,6 +25,7 @@ from buildwise.domain.discovery import (
     Unknown,
 )
 from buildwise.domain.enums import ReviewDecision, RevisionTarget, SessionStatus
+from buildwise.domain.exceptions import CrewExecutionError
 from buildwise.domain.intake import ClarificationAnswer, ProductIdeaRequest
 from buildwise.domain.review import LeadReview, RevisionRequest
 from buildwise.domain.technical_planning import TechnicalPlanningResult
@@ -45,6 +47,18 @@ class _FakeCrew:
 
     def kickoff(self) -> CrewOutput:
         return self._output
+
+
+class _RaisingCrew:
+    """A Crew stand-in whose kickoff() always raises, for _kickoff() tests."""
+
+    agents: ClassVar[list[object]] = []
+
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    def kickoff(self) -> CrewOutput:
+        raise self._error
 
 
 class _BlueprintBuilder:
@@ -405,3 +419,38 @@ def test_serialized_clarification_state_resumes_through_completion(
 
     assert isinstance(result, ProductBlueprint)
     assert flow.state.status is SessionStatus.COMPLETED
+
+
+def test_kickoff_wraps_unexpected_crew_failures() -> None:
+    """A Crew failing after its own retries are exhausted (for example a
+    guardrail exhaustion Exception from CrewAI) must not crash the Flow with
+    an opaque, unhandled exception — it becomes a CrewExecutionError tagged
+    with the stage that failed, so the caller can distinguish it from a
+    genuinely unexpected internal error."""
+
+    flow = BuildWiseConsultingFlow(
+        initial_state=BuildWiseFlowState(),
+        settings=_settings(),
+    )
+    underlying = Exception("Task failed guardrail 1 validation after 1 retries.")
+
+    with pytest.raises(CrewExecutionError) as exc_info:
+        flow._kickoff(_RaisingCrew(underlying), stage="product_planning")
+
+    assert exc_info.value.stage == "product_planning"
+    assert exc_info.value.__cause__ is underlying
+
+
+def test_kickoff_lets_runtime_budget_exceeded_pass_through_unwrapped() -> None:
+    """RuntimeBudgetExceeded already has its own safe, specific handling in
+    normalize_session_error — _kickoff must not swallow it into the more
+    generic CrewExecutionError."""
+
+    flow = BuildWiseConsultingFlow(
+        initial_state=BuildWiseFlowState(),
+        settings=_settings(),
+    )
+    budget_error = RuntimeBudgetExceeded("agent execution")
+
+    with pytest.raises(RuntimeBudgetExceeded):
+        flow._kickoff(_RaisingCrew(budget_error), stage="product_planning")

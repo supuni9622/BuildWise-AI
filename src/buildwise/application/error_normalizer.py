@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from buildwise.application.runtime_budget import RuntimeBudgetExceeded
 from buildwise.domain.enums import SessionStage
+from buildwise.domain.exceptions import CrewExecutionError
 from buildwise.domain.session import SessionError
 from buildwise.tools.sanitizer import ToolExecutionError
 
@@ -26,6 +27,24 @@ def normalize_session_error(
             task_name=task_name,
             exception_type=type(error).__name__,
             details={"limit_name": error.limit_name},
+        )
+    if isinstance(error, CrewExecutionError):
+        return SessionError(
+            code="crew_execution_failed",
+            message=(
+                "A specialist crew could not produce a valid result for "
+                f"the '{error.stage}' stage, most commonly because a "
+                "generated output failed validation after its retry "
+                "budget was exhausted. Resubmitting the same idea may "
+                "succeed, since this is usually a one-off generation issue "
+                "rather than a persistent one."
+            ),
+            stage=stage,
+            recoverable=False,
+            retryable=True,
+            task_name=task_name,
+            exception_type=type(error).__name__,
+            details={"crew_stage": error.stage},
         )
     if isinstance(error, ToolExecutionError):
         return SessionError(
