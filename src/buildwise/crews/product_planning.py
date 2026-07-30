@@ -14,10 +14,18 @@ cannot run before either artifact exists.
 
 from __future__ import annotations
 
-from crewai import Crew, CrewOutput, Process, Task
+from crewai import Agent, Crew, CrewOutput, Process, Task
 
 from buildwise.agents.factory import AgentFactory
 from buildwise.config.settings import Settings
+from buildwise.domain.artifact_drafts import (
+    MarketAndGTMStrategyDraft,
+    ProductDefinitionDraft,
+    RequirementsSpecificationDraft,
+    assemble_market_and_gtm_strategy,
+    assemble_product_definition,
+    assemble_requirements_specification,
+)
 from buildwise.domain.common import SessionId
 from buildwise.domain.discovery import DiscoveryResult
 from buildwise.domain.enums import AgentType, RevisionTarget
@@ -38,6 +46,8 @@ def create_product_planning_crew(
     agent_factory: AgentFactory,
     settings: Settings,
     revision_requests: list[RevisionRequest] | None = None,
+    execution_target: RevisionTarget | None = None,
+    previous_result: ProductPlanningResult | None = None,
 ) -> Crew:
     """Build the Product Planning Crew.
 
@@ -65,36 +75,66 @@ def create_product_planning_crew(
         ``include_market_and_gtm`` is true) ``MarketAndGTMStrategy``.
     """
 
-    product_manager_agent = agent_factory.create(AgentType.PRODUCT_MANAGER)
-    business_analyst_agent = agent_factory.create(AgentType.BUSINESS_ANALYST)
+    agents: list[Agent] = []
+    tasks: list[Task] = []
+    product_definition_task: Task | None = None
+    requirements_task: Task | None = None
 
-    product_definition_task = create_product_definition_task(
-        agent=product_manager_agent,
-        discovery_result=discovery_result,
-        revision_request=_find_revision(revision_requests, RevisionTarget.PRODUCT_DEFINITION),
-        guardrail_max_retries=settings.max_retries_per_operation,
-    )
-
-    requirements_task = create_requirements_task(
-        agent=business_analyst_agent,
-        product_definition_task=product_definition_task,
-        revision_request=_find_revision(revision_requests, RevisionTarget.REQUIREMENTS),
-        guardrail_max_retries=settings.max_retries_per_operation,
-    )
-
-    agents = [product_manager_agent, business_analyst_agent]
-    tasks: list[Task] = [product_definition_task, requirements_task]
-
-    if include_market_and_gtm:
-        market_and_gtm_agent = agent_factory.create(AgentType.MARKET_AND_GTM_STRATEGIST)
-
-        market_and_gtm_task = create_market_and_gtm_task(
-            agent=market_and_gtm_agent,
-            product_definition_task=product_definition_task,
-            requirements_task=requirements_task,
-            revision_request=_find_revision(revision_requests, RevisionTarget.MARKET_AND_GTM),
+    if execution_target in {None, RevisionTarget.PRODUCT_DEFINITION}:
+        product_manager_agent = agent_factory.create(AgentType.PRODUCT_MANAGER)
+        product_definition_task = create_product_definition_task(
+            agent=product_manager_agent,
+            discovery_result=discovery_result,
+            revision_request=_find_revision(revision_requests, RevisionTarget.PRODUCT_DEFINITION),
             guardrail_max_retries=settings.max_retries_per_operation,
         )
+        agents.append(product_manager_agent)
+        tasks.append(product_definition_task)
+
+    if execution_target in {None, RevisionTarget.REQUIREMENTS}:
+        business_analyst_agent = agent_factory.create(AgentType.BUSINESS_ANALYST)
+        if product_definition_task is not None:
+            requirements_task = create_requirements_task(
+                agent=business_analyst_agent,
+                product_definition_task=product_definition_task,
+                revision_request=_find_revision(revision_requests, RevisionTarget.REQUIREMENTS),
+                guardrail_max_retries=settings.max_retries_per_operation,
+            )
+        elif previous_result is not None:
+            requirements_task = create_requirements_task(
+                agent=business_analyst_agent,
+                product_definition=previous_result.product_definition,
+                revision_request=_find_revision(revision_requests, RevisionTarget.REQUIREMENTS),
+                guardrail_max_retries=settings.max_retries_per_operation,
+            )
+        else:
+            raise ValueError("Requirements execution requires a Product Definition.")
+        agents.append(business_analyst_agent)
+        tasks.append(requirements_task)
+
+    if include_market_and_gtm and execution_target in {
+        None,
+        RevisionTarget.MARKET_AND_GTM,
+    }:
+        market_and_gtm_agent = agent_factory.create(AgentType.MARKET_AND_GTM_STRATEGIST)
+        if product_definition_task is not None and requirements_task is not None:
+            market_and_gtm_task = create_market_and_gtm_task(
+                agent=market_and_gtm_agent,
+                product_definition_task=product_definition_task,
+                requirements_task=requirements_task,
+                revision_request=_find_revision(revision_requests, RevisionTarget.MARKET_AND_GTM),
+                guardrail_max_retries=settings.max_retries_per_operation,
+            )
+        elif previous_result is not None:
+            market_and_gtm_task = create_market_and_gtm_task(
+                agent=market_and_gtm_agent,
+                product_definition=previous_result.product_definition,
+                requirements=previous_result.requirements,
+                revision_request=_find_revision(revision_requests, RevisionTarget.MARKET_AND_GTM),
+                guardrail_max_retries=settings.max_retries_per_operation,
+            )
+        else:
+            raise ValueError("Market execution requires product planning context.")
 
         agents.append(market_and_gtm_agent)
         tasks.append(market_and_gtm_task)
@@ -137,6 +177,8 @@ def assemble_product_planning_result(
     crew_output: CrewOutput,
     *,
     session_id: SessionId,
+    discovery_result: DiscoveryResult | None = None,
+    previous_result: ProductPlanningResult | None = None,
 ) -> ProductPlanningResult:
     """Assemble a ``ProductPlanningResult`` from a completed Crew run.
 
@@ -158,17 +200,38 @@ def assemble_product_planning_result(
             produced an output of an unexpected type.
     """
 
-    product_definition: ProductDefinition | None = None
-    requirements: RequirementsSpecification | None = None
-    market_and_gtm: MarketAndGTMStrategy | None = None
+    product_definition = previous_result.product_definition if previous_result else None
+    requirements = previous_result.requirements if previous_result else None
+    market_and_gtm = previous_result.market_and_gtm if previous_result else None
 
     for task_output in crew_output.tasks_output:
         output = task_output.pydantic
 
-        if isinstance(output, ProductDefinition):
+        if isinstance(output, ProductDefinitionDraft):
+            if discovery_result is None:
+                raise ValueError("Product Definition draft assembly requires Discovery.")
+            product_definition = assemble_product_definition(
+                output,
+                discovery=discovery_result,
+            )
+        elif isinstance(output, ProductDefinition):
             product_definition = output
+        elif isinstance(output, RequirementsSpecificationDraft):
+            if product_definition is None:
+                raise ValueError("Requirements draft requires Product Definition.")
+            requirements = assemble_requirements_specification(
+                output,
+                product_definition=product_definition,
+            )
         elif isinstance(output, RequirementsSpecification):
             requirements = output
+        elif isinstance(output, MarketAndGTMStrategyDraft):
+            if product_definition is None:
+                raise ValueError("Market draft requires Product Definition.")
+            market_and_gtm = assemble_market_and_gtm_strategy(
+                output,
+                product_definition=product_definition,
+            )
         elif isinstance(output, MarketAndGTMStrategy):
             market_and_gtm = output
         else:

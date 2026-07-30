@@ -3,7 +3,8 @@ name: Security
 on:
   pull_request:
   push:
-    branches: [main]
+    branches:
+      - main
   schedule:
     - cron: "23 4 * * 1"
 
@@ -13,36 +14,61 @@ permissions:
 
 jobs:
   dependency-and-secret-scan:
+    name: Dependency Audit & Secret Scan
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@v6
-      - run: uv python install 3.12
-      - run: uv sync --frozen
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
       - name: Dependency audit
         run: |
-          uv export --frozen --no-dev --format requirements-txt \
+          uv export \
+            --frozen \
+            --no-dev \
+            --no-emit-project \
+            --format requirements-txt \
             --output-file requirements-audit.txt
-          uvx pip-audit --requirement requirements-audit.txt
+
+          uvx pip-audit \
+            --requirement requirements-audit.txt
+
       - name: Secret scan
         uses: gitleaks/gitleaks-action@v2
 
   image-scan:
+    name: Container Image Scan
     runs-on: ubuntu-latest
     timeout-minutes: 20
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
         with:
           context: .
           load: true
-          tags: buildwise-ai:security
           push: false
-      - name: Trivy image scan
+          tags: buildwise-ai:security
+
+      - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@0.33.1
         with:
           image-ref: buildwise-ai:security
@@ -51,6 +77,7 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
+
       - name: Upload Trivy results
         if: always()
         uses: github/codeql-action/upload-sarif@v4

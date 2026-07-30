@@ -11,15 +11,10 @@ from __future__ import annotations
 
 from crewai import Agent, Task
 
+from buildwise.domain.artifact_drafts import RequirementsSpecificationDraft
 from buildwise.domain.product import ProductDefinition
-from buildwise.domain.requirements import RequirementsSpecification
 from buildwise.domain.review import RevisionRequest
-from buildwise.tasks.guardrails import (
-    TaskGuardrail,
-    compose_guardrails,
-    require_pydantic_output,
-    run_domain_validator,
-)
+from buildwise.tasks.guardrails import compose_guardrails, require_pydantic_output
 from buildwise.tasks.revisions import format_revision_instructions
 
 DEFAULT_GUARDRAIL_MAX_RETRIES = 2
@@ -94,10 +89,11 @@ def create_requirements_task(
         "- Define user journeys and user stories covering the must-have "
         "functional requirements.\n"
         "- Identify edge cases the product must handle.\n\n"
-        "Required output: A schema-valid RequirementsSpecification "
-        "referencing this ProductDefinition by product_definition_id, with "
+        "Required output: A schema-valid RequirementsSpecificationDraft with "
         "every reference (feature, persona, goal, requirement) resolving to "
         "an identifier that actually exists in the supplied context.\n\n"
+        "Do not emit top-level ownership, timestamps, or source metadata; "
+        "the application adds them deterministically.\n\n"
         "Important boundaries:\n"
         "- Do not make technical architecture or technology decisions.\n"
         "- Do not select an AI model or design prompts.\n"
@@ -112,31 +108,19 @@ def create_requirements_task(
         description += "\n\n" + format_revision_instructions(revision_request)
 
     expected_output = (
-        "A schema-valid RequirementsSpecification JSON object matching the "
-        "RequirementsSpecification Pydantic model exactly, with no "
+        "A schema-valid RequirementsSpecificationDraft JSON object matching "
+        "the compact draft model exactly, with no "
         "additional prose."
     )
 
-    guardrail_list: list[TaskGuardrail] = [require_pydantic_output(RequirementsSpecification)]
-
-    if product_definition is not None:
-        guardrail_list.append(
-            run_domain_validator(
-                lambda output: RequirementsSpecification.validate_product_ownership(
-                    requirements_specification=output,
-                    product_definition=product_definition,
-                )
-            )
-        )
-
-    guardrails = compose_guardrails(*guardrail_list)
+    guardrails = compose_guardrails(require_pydantic_output(RequirementsSpecificationDraft))
 
     task_kwargs: dict[str, object] = {
         "name": "requirements_specification",
         "description": description,
         "expected_output": expected_output,
         "agent": agent,
-        "output_pydantic": RequirementsSpecification,
+        "output_pydantic": RequirementsSpecificationDraft,
         "guardrails": guardrails,
         "guardrail_max_retries": guardrail_max_retries,
     }

@@ -15,16 +15,12 @@ from __future__ import annotations
 
 from crewai import Agent, Task
 
-from buildwise.domain.ai_architecture import AIArchitecture
 from buildwise.domain.architecture import SolutionArchitecture
+from buildwise.domain.artifact_drafts import AIArchitectureDraft
 from buildwise.domain.requirements import RequirementsSpecification
 from buildwise.domain.review import RevisionRequest
-from buildwise.tasks.guardrails import (
-    TaskGuardrail,
-    compose_guardrails,
-    require_pydantic_output,
-    run_domain_validator,
-)
+from buildwise.planning.specialist_context import AIArchitectContext
+from buildwise.tasks.guardrails import compose_guardrails, require_pydantic_output
 from buildwise.tasks.revisions import format_revision_instructions
 
 DEFAULT_GUARDRAIL_MAX_RETRIES = 2
@@ -84,7 +80,10 @@ def create_ai_architecture_task(
         "Available structured context: the completed Solution Architecture "
         "task output is provided as native task context."
         if solution_architecture_task is not None
-        else f"SolutionArchitecture: {solution_architecture.model_dump_json()}"  # type: ignore[union-attr]
+        else AIArchitectContext.build(
+            requirements,
+            solution_architecture,  # type: ignore[arg-type]
+        ).model_dump_json()
     )
 
     description = (
@@ -92,7 +91,6 @@ def create_ai_architecture_task(
         "capabilities identified in the approved requirements and solution "
         "architecture.\n\n"
         "Available structured context:\n"
-        f"RequirementsSpecification: {requirements.model_dump_json()}\n"
         f"{architecture_section}\n\n"
         "Required decisions:\n"
         "- Identify every AI capability the product requires and justify "
@@ -108,9 +106,7 @@ def create_ai_architecture_task(
         "- Define AI observability requirements, human oversight, fallback, "
         "cost control, and privacy strategy.\n"
         "- Identify AI-specific risks and AI-owned cost estimates.\n\n"
-        "Required output: A schema-valid AIArchitecture referencing this "
-        "RequirementsSpecification by requirements_specification_id and "
-        "this SolutionArchitecture by solution_architecture_id, where every "
+        "Required output: A schema-valid AIArchitectureDraft where every "
         "AI capability has both model-requirement coverage and evaluation "
         "coverage.\n\n"
         "Important boundaries:\n"
@@ -128,38 +124,18 @@ def create_ai_architecture_task(
         description += "\n\n" + format_revision_instructions(revision_request)
 
     expected_output = (
-        "A schema-valid AIArchitecture JSON object matching the "
-        "AIArchitecture Pydantic model exactly, with no additional prose."
+        "A schema-valid AIArchitectureDraft JSON object matching the compact "
+        "draft model exactly, with no additional prose."
     )
 
-    guardrail_list: list[TaskGuardrail] = [
-        require_pydantic_output(AIArchitecture),
-        run_domain_validator(
-            lambda output: AIArchitecture.validate_requirements_ownership(
-                ai_architecture=output,
-                requirements_specification=requirements,
-            )
-        ),
-    ]
-
-    if solution_architecture is not None:
-        guardrail_list.append(
-            run_domain_validator(
-                lambda output: AIArchitecture.validate_architecture_ownership(
-                    ai_architecture=output,
-                    solution_architecture=solution_architecture,
-                )
-            )
-        )
-
-    guardrails = compose_guardrails(*guardrail_list)
+    guardrails = compose_guardrails(require_pydantic_output(AIArchitectureDraft))
 
     task_kwargs: dict[str, object] = {
         "name": "ai_architecture",
         "description": description,
         "expected_output": expected_output,
         "agent": agent,
-        "output_pydantic": AIArchitecture,
+        "output_pydantic": AIArchitectureDraft,
         "guardrails": guardrails,
         "guardrail_max_retries": guardrail_max_retries,
     }

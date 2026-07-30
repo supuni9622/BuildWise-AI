@@ -193,6 +193,11 @@ class AgentFactory:
         reasoning_enabled = (
             runtime.reasoning and self._settings.crewai_reasoning_enabled
         )
+        max_iterations = (
+            min(runtime.max_iter, self._settings.max_agent_iterations)
+            if contract.capabilities.has_action_capabilities
+            else 1
+        )
 
         agent_kwargs: dict[str, Any] = {
             "role": contract.role,
@@ -203,10 +208,7 @@ class AgentFactory:
             "skills": skills,
             "verbose": (runtime.verbose and self._settings.crewai_verbose),
             "allow_delegation": runtime.allow_delegation,
-            "max_iter": min(
-                runtime.max_iter,
-                self._settings.max_agent_iterations,
-            ),
+            "max_iter": max_iterations,
             "max_retry_limit": self._settings.agent_task_retry_limit,
             "max_rpm": runtime.max_rpm,
             "reasoning": reasoning_enabled,

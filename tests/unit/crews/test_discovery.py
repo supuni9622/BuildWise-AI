@@ -1,14 +1,46 @@
 from uuid import uuid4
 
+from pydantic import SecretStr
+
+from buildwise.agents.factory import AgentFactory
+from buildwise.config.settings import Settings
 from buildwise.crews.discovery import (
     bind_discovery_session,
+    create_discovery_crew,
     merge_discovery_refinement,
 )
 from buildwise.domain.discovery import (
     DiscoveryCompletenessRefinement,
     DiscoveryRefinement,
 )
+from buildwise.domain.discovery_draft import DiscoveryDraft
+from buildwise.domain.intake import ProductIdeaRequest
 from fixtures.planning import build_discovery_result
+
+
+def test_initial_discovery_crew_requests_compact_draft() -> None:
+    session_id = uuid4()
+    settings = Settings(
+        openai_api_key=SecretStr("sk-test-not-a-real-key"),
+        crewai_tracing_enabled=False,
+        crewai_verbose=False,
+    )
+
+    crew = create_discovery_crew(
+        session_id=session_id,
+        product_idea=ProductIdeaRequest(
+            idea=(
+                "Build a scheduling assistant for distributed teams across "
+                "multiple time zones."
+            )
+        ),
+        agent_factory=AgentFactory(settings=settings),
+        settings=settings,
+    )
+
+    assert len(crew.tasks) == 1
+    assert crew.tasks[0].output_pydantic is DiscoveryDraft
+    assert crew.agents[0].max_iter == 1
 
 
 def test_bind_discovery_session_replaces_all_owned_session_ids() -> None:

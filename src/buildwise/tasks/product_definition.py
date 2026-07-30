@@ -10,15 +10,10 @@ from __future__ import annotations
 
 from crewai import Agent, Task
 
+from buildwise.domain.artifact_drafts import ProductDefinitionDraft
 from buildwise.domain.discovery import DiscoveryResult
-from buildwise.domain.product import ProductDefinition
 from buildwise.domain.review import RevisionRequest
-from buildwise.tasks.guardrails import (
-    TaskGuardrail,
-    compose_guardrails,
-    require_pydantic_output,
-    run_domain_validator,
-)
+from buildwise.tasks.guardrails import compose_guardrails, require_pydantic_output
 from buildwise.tasks.revisions import format_revision_instructions
 
 DEFAULT_GUARDRAIL_MAX_RETRIES = 2
@@ -95,8 +90,8 @@ def create_product_definition_task(
         "- Define a roadmap with at least one MVP-horizon item.\n"
         "- Define product-level risks, success metrics, and any assumptions "
         "or open questions carried forward from Discovery.\n\n"
-        "Required output: A schema-valid ProductDefinition referencing this "
-        "DiscoveryResult by discovery_result_id.\n\n"
+        "Required output: A schema-valid ProductDefinitionDraft. The "
+        "application adds artifact ownership and provenance metadata.\n\n"
         "Identifier rules:\n"
         "- Every id and every value in an *_id or *_ids reference field must "
         "be a complete RFC 4122 UUID string (for example, "
@@ -107,8 +102,8 @@ def create_product_definition_task(
         "artifact; do not generate a different UUID for the reference.\n"
         "- Reference dependencies by artifact UUID, never by feature or "
         "roadmap name, and never repeat an ID within the same list.\n"
-        "- Preserve session_id and discovery_result_id exactly from the "
-        "DiscoveryResult context.\n\n"
+        "- Do not emit top-level id, session_id, discovery_result_id, "
+        "source_metadata, or generated_at fields.\n\n"
         "Risk acceptance rules:\n"
         "- When accepted=false, acceptance_rationale must be null.\n"
         "- When accepted=true, provide acceptance_rationale.\n\n"
@@ -128,32 +123,20 @@ def create_product_definition_task(
         description += "\n\n" + format_revision_instructions(revision_request)
 
     expected_output = (
-        "A schema-valid ProductDefinition JSON object matching the "
-        "ProductDefinition Pydantic model exactly, using RFC 4122 UUIDs for "
+        "A schema-valid ProductDefinitionDraft JSON object matching the "
+        "compact draft model exactly, using RFC 4122 UUIDs for nested "
         "all identifiers and preserving cross-references, with no additional "
         "prose."
     )
 
-    guardrail_list: list[TaskGuardrail] = [require_pydantic_output(ProductDefinition)]
-
-    if discovery_result is not None:
-        guardrail_list.append(
-            run_domain_validator(
-                lambda output: ProductDefinition.validate_discovery_ownership(
-                    product_definition=output,
-                    discovery_result=discovery_result,
-                )
-            )
-        )
-
-    guardrails = compose_guardrails(*guardrail_list)
+    guardrails = compose_guardrails(require_pydantic_output(ProductDefinitionDraft))
 
     task_kwargs: dict[str, object] = {
         "name": "product_definition",
         "description": description,
         "expected_output": expected_output,
         "agent": agent,
-        "output_pydantic": ProductDefinition,
+        "output_pydantic": ProductDefinitionDraft,
         "guardrails": guardrails,
         "guardrail_max_retries": guardrail_max_retries,
     }

@@ -19,6 +19,12 @@ from buildwise.agents.factory import AgentFactory
 from buildwise.config.settings import Settings
 from buildwise.domain.ai_architecture import AIArchitecture
 from buildwise.domain.architecture import SolutionArchitecture
+from buildwise.domain.artifact_drafts import (
+    AIArchitectureDraft,
+    SolutionArchitectureDraft,
+    assemble_ai_architecture,
+    assemble_solution_architecture,
+)
 from buildwise.domain.common import SessionId
 from buildwise.domain.enums import AgentType, RevisionTarget, SpecialistType
 from buildwise.domain.qa import QAEvaluationPlan
@@ -246,6 +252,7 @@ def assemble_technical_planning_result(
     crew_output: CrewOutput,
     *,
     session_id: SessionId,
+    requirements: RequirementsSpecification | None = None,
     previous_result: TechnicalPlanningResult | None = None,
 ) -> TechnicalPlanningResult:
     """Assemble a ``TechnicalPlanningResult`` from a completed Crew run.
@@ -279,8 +286,25 @@ def assemble_technical_planning_result(
     for task_output in crew_output.tasks_output:
         output = task_output.pydantic
 
-        if isinstance(output, SolutionArchitecture):
+        if isinstance(output, SolutionArchitectureDraft):
+            if requirements is None:
+                raise ValueError("Solution draft assembly requires Requirements.")
+            solution_architecture = assemble_solution_architecture(
+                output,
+                requirements=requirements,
+            )
+        elif isinstance(output, SolutionArchitecture):
             solution_architecture = output
+        elif isinstance(output, AIArchitectureDraft):
+            if requirements is None or solution_architecture is None:
+                raise ValueError(
+                    "AI draft assembly requires Requirements and Solution Architecture."
+                )
+            ai_architecture = assemble_ai_architecture(
+                output,
+                requirements=requirements,
+                solution=solution_architecture,
+            )
         elif isinstance(output, AIArchitecture):
             ai_architecture = output
         elif isinstance(output, SecurityArchitecture):

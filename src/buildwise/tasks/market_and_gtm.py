@@ -16,16 +16,11 @@ from __future__ import annotations
 
 from crewai import Agent, Task
 
-from buildwise.domain.market_and_gtm import MarketAndGTMStrategy
+from buildwise.domain.artifact_drafts import MarketAndGTMStrategyDraft
 from buildwise.domain.product import ProductDefinition
 from buildwise.domain.requirements import RequirementsSpecification
 from buildwise.domain.review import RevisionRequest
-from buildwise.tasks.guardrails import (
-    TaskGuardrail,
-    compose_guardrails,
-    require_pydantic_output,
-    run_domain_validator,
-)
+from buildwise.tasks.guardrails import compose_guardrails, require_pydantic_output
 from buildwise.tasks.revisions import format_revision_instructions
 
 DEFAULT_GUARDRAIL_MAX_RETRIES = 2
@@ -130,8 +125,7 @@ def create_market_and_gtm_task(
         "- Define bounded launch experiments that validate the riskiest "
         "assumptions.\n"
         "- Identify market and go-to-market risks.\n\n"
-        "Required output: A schema-valid MarketAndGTMStrategy referencing "
-        "this ProductDefinition by product_definition_id, where every claim "
+        "Required output: A schema-valid MarketAndGTMStrategyDraft where every claim "
         "not directly derivable from the supplied product definition and "
         "requirements is backed by an evidence entry.\n\n"
         "Important boundaries:\n"
@@ -152,31 +146,19 @@ def create_market_and_gtm_task(
         description += "\n\n" + format_revision_instructions(revision_request)
 
     expected_output = (
-        "A schema-valid MarketAndGTMStrategy JSON object matching the "
-        "MarketAndGTMStrategy Pydantic model exactly, with no additional "
+        "A schema-valid MarketAndGTMStrategyDraft JSON object matching the "
+        "compact draft model exactly, with no additional "
         "prose."
     )
 
-    guardrail_list: list[TaskGuardrail] = [require_pydantic_output(MarketAndGTMStrategy)]
-
-    if product_definition is not None:
-        guardrail_list.append(
-            run_domain_validator(
-                lambda output: MarketAndGTMStrategy.validate_product_ownership(
-                    market_and_gtm_strategy=output,
-                    product_definition=product_definition,
-                )
-            )
-        )
-
-    guardrails = compose_guardrails(*guardrail_list)
+    guardrails = compose_guardrails(require_pydantic_output(MarketAndGTMStrategyDraft))
 
     task_kwargs: dict[str, object] = {
         "name": "market_and_gtm_strategy",
         "description": description,
         "expected_output": expected_output,
         "agent": agent,
-        "output_pydantic": MarketAndGTMStrategy,
+        "output_pydantic": MarketAndGTMStrategyDraft,
         "guardrails": guardrails,
         "guardrail_max_retries": guardrail_max_retries,
     }

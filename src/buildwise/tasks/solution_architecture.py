@@ -9,14 +9,11 @@ from __future__ import annotations
 
 from crewai import Agent, Task
 
-from buildwise.domain.architecture import SolutionArchitecture
+from buildwise.domain.artifact_drafts import SolutionArchitectureDraft
 from buildwise.domain.requirements import RequirementsSpecification
 from buildwise.domain.review import RevisionRequest
-from buildwise.tasks.guardrails import (
-    compose_guardrails,
-    require_pydantic_output,
-    run_domain_validator,
-)
+from buildwise.planning.specialist_context import SolutionArchitectContext
+from buildwise.tasks.guardrails import compose_guardrails, require_pydantic_output
 from buildwise.tasks.revisions import format_revision_instructions
 
 DEFAULT_GUARDRAIL_MAX_RETRIES = 2
@@ -49,11 +46,12 @@ def create_solution_architecture_task(
     if guardrail_max_retries < 0:
         raise ValueError("guardrail_max_retries cannot be negative.")
 
+    context = SolutionArchitectContext.build(requirements)
     description = (
         "Objective: Design a solution architecture that satisfies the "
         "approved requirements.\n\n"
         "Available structured context:\n"
-        f"{requirements.model_dump_json()}\n\n"
+        f"{context.model_dump_json()}\n\n"
         "Required decisions:\n"
         "- Select an architecture style and justify it against the "
         "requirements.\n"
@@ -68,8 +66,7 @@ def create_solution_architecture_task(
         "ensuring every critical component has observability coverage.\n"
         "- Record architecture decisions, risks, and architecture-owned "
         "cost estimates.\n\n"
-        "Required output: A schema-valid SolutionArchitecture referencing "
-        "this RequirementsSpecification by requirements_specification_id, "
+        "Required output: A schema-valid SolutionArchitectureDraft "
         "with every must-have functional requirement mapped to at least one "
         "component.\n\n"
         "Important boundaries:\n"
@@ -88,27 +85,19 @@ def create_solution_architecture_task(
         description += "\n\n" + format_revision_instructions(revision_request)
 
     expected_output = (
-        "A schema-valid SolutionArchitecture JSON object matching the "
-        "SolutionArchitecture Pydantic model exactly, with no additional "
+        "A schema-valid SolutionArchitectureDraft JSON object matching the "
+        "compact draft model exactly, with no additional "
         "prose."
     )
 
-    guardrails = compose_guardrails(
-        require_pydantic_output(SolutionArchitecture),
-        run_domain_validator(
-            lambda output: SolutionArchitecture.validate_requirements_ownership(
-                solution_architecture=output,
-                requirements_specification=requirements,
-            )
-        ),
-    )
+    guardrails = compose_guardrails(require_pydantic_output(SolutionArchitectureDraft))
 
     return Task(
         name="solution_architecture",
         description=description,
         expected_output=expected_output,
         agent=agent,
-        output_pydantic=SolutionArchitecture,
+        output_pydantic=SolutionArchitectureDraft,
         guardrails=guardrails,
         guardrail_max_retries=guardrail_max_retries,
     )

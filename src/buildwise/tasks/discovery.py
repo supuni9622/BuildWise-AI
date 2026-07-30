@@ -2,8 +2,8 @@
 
 Creates the native CrewAI Task assigned to the Product Discovery Analyst. The
 task turns a raw ``ProductIdeaRequest`` (and any prior clarification answers)
-into a structured ``DiscoveryResult``: known facts, assumptions, unknowns,
-preliminary risks, capability classification, and a completeness assessment.
+into a compact ``DiscoveryDraft``. The application later adds operational
+metadata and derives redundant routing fields deterministically.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from crewai import Agent, Task
 
 from buildwise.domain.common import SessionId
 from buildwise.domain.discovery import DiscoveryRefinement, DiscoveryResult
+from buildwise.domain.discovery_draft import DiscoveryDraft
 from buildwise.domain.intake import ProductIdeaContext, ProductIdeaRequest
 from buildwise.tasks.guardrails import compose_guardrails, require_pydantic_output
 
@@ -39,7 +40,7 @@ def create_discovery_task(
         guardrail_max_retries: Bounded guardrail retry budget.
 
     Returns:
-        A native ``crewai.Task`` producing a ``DiscoveryResult``.
+        A native ``crewai.Task`` producing a compact ``DiscoveryDraft``.
     """
 
     if agent is None:
@@ -76,28 +77,20 @@ def create_discovery_task(
         "  * For every unknown, set recommended_assumption to a non-null "
         "string only when can_proceed_with_assumption=true; set it to null "
         "when can_proceed_with_assumption=false.\n"
-        "  * If blocking_unknown_keys is non-empty, set can_continue=false "
-        "and clarification_required=true.\n"
-        "  * Every blocking unknown must have clarification_required=true.\n"
-        "  * If completeness.clarification_required=true, provide "
-        "clarification_questions and set recommended_next_step to "
-        "request_clarification.\n"
-        "  * Set percentage to exactly score multiplied by 100.\n\n"
-        "  * For each known fact whose source_type is user_provided or "
-        "clarification_answer, include at least one source_reference_id that "
-        "matches an entry in source_metadata.\n"
+        "  * If any unknown is blocking, provide clarification_questions.\n"
         "  * For free_text, boolean, integer, and decimal clarification "
         "questions, set options=[] and allow_other=false. Choice questions "
         "must contain at least two unique options.\n\n"
-        "Required output: A schema-valid DiscoveryResult containing "
+        "Required output: A schema-valid DiscoveryDraft containing "
         "known_facts, assumptions, unknowns, risks, completeness, "
-        "capability_classification, and recommended_next_step.\n\n"
+        "capability_signals, and clarification questions when needed.\n\n"
         "Important boundaries:\n"
-        "- Copy the authoritative session_id exactly into DiscoveryResult.session_id, "
-        "idea_context.session_id, idea_context.validated_idea.session_id, and "
-        "clarification_questions.session_id when clarification questions are present.\n"
+        "- Do not generate IDs, timestamps, percentages, session ownership, "
+        "source-reference IDs, routing booleans, or a recommended route. The "
+        "application derives those fields deterministically.\n"
+        "- Link clarification questions to unknowns by related_unknown_keys.\n"
         "- Do not ask the user questions directly; only populate "
-        "clarification_questions when completeness requires them.\n"
+        "clarification_questions when blocking unknowns require them.\n"
         "- Do not select downstream specialists or make architecture "
         "decisions.\n"
         "- Do not fabricate facts; unresolved information must be recorded "
@@ -109,18 +102,18 @@ def create_discovery_task(
     )
 
     expected_output = (
-        "A schema-valid DiscoveryResult JSON object matching the "
-        "DiscoveryResult Pydantic model exactly, with no additional prose."
+        "A schema-valid DiscoveryDraft JSON object matching the compact "
+        "DiscoveryDraft Pydantic model exactly, with no additional prose."
     )
 
-    guardrails = compose_guardrails(require_pydantic_output(DiscoveryResult))
+    guardrails = compose_guardrails(require_pydantic_output(DiscoveryDraft))
 
     return Task(
         name="product_discovery",
         description=description,
         expected_output=expected_output,
         agent=agent,
-        output_pydantic=DiscoveryResult,
+        output_pydantic=DiscoveryDraft,
         guardrails=guardrails,
         guardrail_max_retries=guardrail_max_retries,
     )
@@ -137,9 +130,7 @@ def create_discovery_refinement_task(
 ) -> Task:
     """Create a compact task that revisits only unresolved Discovery decisions."""
 
-    at_round_limit = (
-        clarification_context.clarification_round >= maximum_clarification_rounds
-    )
+    at_round_limit = clarification_context.clarification_round >= maximum_clarification_rounds
     unresolved = [unknown.model_dump(mode="json") for unknown in previous_discovery.unknowns]
     description = (
         "Objective: refine only the unresolved Discovery decisions using the newly "

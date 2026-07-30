@@ -24,6 +24,7 @@ from buildwise.domain.enums import RiskLikelihood, RiskSeverity
 from buildwise.domain.requirements import RequirementsSpecification
 from buildwise.domain.review import RevisionRequest
 from buildwise.domain.security import SecurityArchitecture
+from buildwise.planning.specialist_context import SecurityArchitectContext
 from buildwise.tasks.guardrails import compose_guardrails, require_pydantic_output
 from buildwise.tasks.revisions import format_revision_instructions
 
@@ -94,7 +95,7 @@ def create_security_architecture_task(
             "ai_architecture_task or ai_architecture, not both."
         )
 
-    context_lines = [f"RequirementsSpecification: {requirements.model_dump_json()}"]
+    context_lines: list[str] = []
     context_tasks: list[Task] = []
 
     if solution_architecture_task is not None:
@@ -102,13 +103,17 @@ def create_security_architecture_task(
         context_tasks.append(solution_architecture_task)
     else:
         context_lines.append(
-            f"SolutionArchitecture: {solution_architecture.model_dump_json()}"  # type: ignore[union-attr]
+            SecurityArchitectContext.build(
+                requirements,
+                solution_architecture,  # type: ignore[arg-type]
+                ai_architecture,
+            ).model_dump_json()
         )
 
     if ai_architecture_task is not None:
         context_lines.append("AIArchitecture: provided as native task context.")
         context_tasks.append(ai_architecture_task)
-    elif ai_architecture is not None:
+    elif ai_architecture is not None and solution_architecture_task is not None:
         context_lines.append(f"AIArchitecture: {ai_architecture.model_dump_json()}")
 
     description = (

@@ -1,7 +1,8 @@
 """Discovery Crew factory.
 
 Combines the Product Discovery Analyst agent with the Discovery task into a
-single, focused, native CrewAI Crew that produces a ``DiscoveryResult``.
+single, focused, native CrewAI Crew that produces a compact ``DiscoveryDraft``
+for deterministic assembly into a canonical ``DiscoveryResult``.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from buildwise.agents.factory import AgentFactory
 from buildwise.config.settings import Settings
 from buildwise.domain.common import SessionId
 from buildwise.domain.discovery import DiscoveryRefinement, DiscoveryResult
+from buildwise.domain.discovery_draft import DiscoveryDraft, assemble_discovery_result
 from buildwise.domain.enums import AgentType
 from buildwise.domain.intake import ProductIdeaContext, ProductIdeaRequest
 from buildwise.tasks.discovery import (
@@ -44,7 +46,8 @@ def create_discovery_crew(
 
     Returns:
         A native ``crewai.Crew`` with one agent and one task, producing a
-        ``DiscoveryResult``.
+        compact ``DiscoveryDraft`` for an initial run, or a
+        ``DiscoveryRefinement`` after clarification.
     """
 
     agent = agent_factory.create(AgentType.PRODUCT_DISCOVERY_ANALYST)
@@ -93,6 +96,21 @@ def bind_discovery_session(
     if payload["clarification_questions"] is not None:
         payload["clarification_questions"]["session_id"] = session_id
     return DiscoveryResult.model_validate(payload)
+
+
+def assemble_initial_discovery(
+    draft: DiscoveryDraft,
+    *,
+    session_id: SessionId,
+    product_idea: ProductIdeaRequest,
+) -> DiscoveryResult:
+    """Assemble an initial canonical result from the compact LLM draft."""
+
+    return assemble_discovery_result(
+        draft,
+        session_id=session_id,
+        product_idea=product_idea,
+    )
 
 
 def merge_discovery_refinement(

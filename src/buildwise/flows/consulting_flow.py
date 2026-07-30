@@ -23,6 +23,7 @@ from buildwise.application.runtime_budget import (
 from buildwise.application.usage_aggregator import UsageAggregator
 from buildwise.config.settings import Settings, get_settings
 from buildwise.crews.discovery import (
+    assemble_initial_discovery,
     bind_discovery_session,
     create_discovery_crew,
     merge_discovery_refinement,
@@ -40,6 +41,7 @@ from buildwise.domain.blueprint import ProductBlueprint
 from buildwise.domain.common import WarningMessage, generate_uuid
 from buildwise.domain.costs import CostSummary
 from buildwise.domain.discovery import DiscoveryRefinement, DiscoveryResult
+from buildwise.domain.discovery_draft import DiscoveryDraft
 from buildwise.domain.enums import (
     ReviewDecision,
     SessionStage,
@@ -48,6 +50,7 @@ from buildwise.domain.enums import (
 )
 from buildwise.domain.intake import ClarificationAnswer, ProductIdeaContext
 from buildwise.domain.product_planning import ProductPlanningResult
+from buildwise.domain.requirements import RequirementsSpecification
 from buildwise.domain.review import LeadReview, RevisionRequest
 from buildwise.domain.session import SessionError
 from buildwise.domain.specialist_planning import SpecialistExecutionPlan
@@ -67,6 +70,7 @@ from buildwise.flows.routing import (
     route_after_specialists,
 )
 from buildwise.flows.state import BuildWiseFlowState
+from buildwise.observability.crewai_telemetry import register_crew_telemetry
 from buildwise.planning.planner import SpecialistPlanner
 from buildwise.reporting.assembler import BlueprintAssembler
 from buildwise.reporting.storage import (
@@ -79,6 +83,12 @@ from buildwise.validation.output_validator import validate_output
 logger = structlog.get_logger(__name__)
 
 CrewFactory = Callable[..., Crew]
+_TECHNICAL_EXECUTION_ORDER = (
+    SpecialistType.SOLUTION_ARCHITECTURE,
+    SpecialistType.AI_ARCHITECTURE,
+    SpecialistType.SECURITY_ARCHITECTURE,
+    SpecialistType.QA_AND_EVALUATION,
+)
 
 
 class _NullFlowPersistence(FlowPersistence):
@@ -230,10 +240,19 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
                     session_id=self.state.session_id,
                 )
         else:
-            result = bind_discovery_session(
-                self._require_output(output, DiscoveryResult, "Discovery Crew"),
-                session_id=self.state.session_id,
-            )
+            if isinstance(output.pydantic, DiscoveryDraft):
+                result = assemble_initial_discovery(
+                    output.pydantic,
+                    session_id=self.state.session_id,
+                    product_idea=intake,
+                )
+            else:
+                # Preserve compatibility with injected Crew doubles and
+                # previously configured custom Discovery crews.
+                result = bind_discovery_session(
+                    self._require_output(output, DiscoveryResult, "Discovery Crew"),
+                    session_id=self.state.session_id,
+                )
         self.state.set_product_context(result.idea_context)
         self.state.set_discovery_result(result)
         logger.info("discovery_completed", session_id=str(self.state.session_id))
@@ -278,6 +297,7 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
         result = assemble_product_planning_result(
             output,
             session_id=self.state.session_id,
+            discovery_result=discovery,
         )
         self.state.set_product_planning_result(result)
         logger.info("product_planning_completed", session_id=str(self.state.session_id))
@@ -319,16 +339,13 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
             "specialist_execution_plan",
         )
         self._mark_selected_specialists_running()
-        crew = self._technical_planning_crew_factory(
+        result = self._execute_technical_specialists(
             requirements=product_planning.requirements,
-            specialist_plan=plan,
-            agent_factory=self._agent_factory,
-            settings=self._settings,
-        )
-        output = self._kickoff(crew, stage="technical_planning")
-        result = assemble_technical_planning_result(
-            output,
-            session_id=self.state.session_id,
+            plan=plan,
+            specialists=set(self.state.selected_specialists),
+            previous=None,
+            revision_requests=[],
+            stage_prefix="technical_planning",
         )
         self._finalize_specialist_executions(result)
         self.state.set_technical_planning_result(result)
@@ -525,6 +542,8 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
         result = assemble_product_planning_result(
             self._kickoff(crew, stage="product_revision"),
             session_id=self.state.session_id,
+            discovery_result=discovery,
+            previous_result=previous,
         )
         self.state.set_product_planning_result(result)
 
@@ -563,25 +582,58 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
             if execution.status == "completed" and execution.specialist in specialists:
                 execution.prepare_revision()
         self._mark_selected_specialists_running(specialists=specialists)
-        crew = self._technical_planning_crew_factory(
+        result = self._execute_technical_specialists(
             requirements=product.requirements,
-            specialist_plan=plan,
-            revision_specialists=specialists,
-            previous_result=previous,
+            plan=plan,
+            specialists=specialists,
+            previous=previous,
             revision_requests=[
                 request for request in requests if request.target in TECHNICAL_REVISION_TARGETS
             ],
-            agent_factory=self._agent_factory,
-            settings=self._settings,
-        )
-        result = assemble_technical_planning_result(
-            self._kickoff(crew, stage="technical_revision"),
-            session_id=self.state.session_id,
-            previous_result=previous,
+            stage_prefix="technical_revision",
         )
         self._finalize_specialist_executions(result)
         self.state.set_technical_planning_result(result)
         self._aggregate_project_costs()
+
+    def _execute_technical_specialists(
+        self,
+        *,
+        requirements: RequirementsSpecification,
+        plan: SpecialistExecutionPlan,
+        specialists: set[SpecialistType],
+        previous: TechnicalPlanningResult | None,
+        revision_requests: list[RevisionRequest],
+        stage_prefix: str,
+    ) -> TechnicalPlanningResult:
+        """Run each dependency in its own Crew with a projected typed input."""
+
+        result = previous
+        for specialist in _TECHNICAL_EXECUTION_ORDER:
+            if specialist not in specialists:
+                continue
+            crew = self._technical_planning_crew_factory(
+                requirements=requirements,
+                specialist_plan=plan,
+                revision_specialists={specialist},
+                previous_result=result,
+                revision_requests=revision_requests,
+                agent_factory=self._agent_factory,
+                settings=self._settings,
+            )
+            output = self._kickoff(
+                crew,
+                stage=f"{stage_prefix}.{specialist.value}",
+            )
+            result = assemble_technical_planning_result(
+                output,
+                session_id=self.state.session_id,
+                requirements=requirements,
+                previous_result=result,
+            )
+        if result is None:
+            raise ValueError("Technical planning selected no executable specialists.")
+        return result
 
     def _clarification_context(self) -> ProductIdeaContext | None:
         if not self.state.clarification_answers:
@@ -673,6 +725,13 @@ class BuildWiseConsultingFlow(Flow[BuildWiseFlowState]):
 
     def _kickoff(self, crew: Crew, *, stage: str) -> CrewOutput:
         agent_execution_count = max(len(getattr(crew, "agents", [])), 1)
+        register_crew_telemetry(
+            crew,
+            consultation_id=str(self.state.session_id),
+            flow_id=str(self.flow_id),
+            stage=stage,
+            provider_retry_limit=self._settings.llm_max_retries,
+        )
         budget = RuntimeBudgetController(
             summary=self.state.usage,
             limits=self.state.limits,

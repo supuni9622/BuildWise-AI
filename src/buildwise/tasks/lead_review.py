@@ -22,6 +22,7 @@ from buildwise.domain.requirements import RequirementsSpecification
 from buildwise.domain.review import LeadReview, RevisionRequest
 from buildwise.domain.security import SecurityArchitecture
 from buildwise.domain.specialist_planning import SpecialistExecutionPlan
+from buildwise.reviewing.review_index import build_lead_review_index
 from buildwise.tasks.guardrails import (
     compose_guardrails,
     require_pydantic_output,
@@ -83,14 +84,6 @@ def create_lead_review_task(
     if guardrail_max_retries < 0:
         raise ValueError("guardrail_max_retries cannot be negative.")
 
-    context_lines = [
-        f"DiscoveryResult: {discovery.model_dump_json()}",
-        f"ProductDefinition: {product_definition.model_dump_json()}",
-        f"RequirementsSpecification: {requirements.model_dump_json()}",
-        f"SpecialistExecutionPlan: {specialist_plan.model_dump_json()}",
-        f"CostSummary: {cost_summary.model_dump_json()}",
-    ]
-
     optional_artifacts = {
         "MarketAndGTMStrategy": market_and_gtm,
         "SolutionArchitecture": solution_architecture,
@@ -99,9 +92,19 @@ def create_lead_review_task(
         "QAEvaluationPlan": qa_evaluation,
     }
 
-    for label, artifact in optional_artifacts.items():
-        if artifact is not None:
-            context_lines.append(f"{label}: {artifact.model_dump_json()}")
+    review_index = build_lead_review_index(
+        discovery=discovery,
+        product_definition=product_definition,
+        requirements=requirements,
+        specialist_plan=specialist_plan,
+        cost_summary=cost_summary,
+        market_and_gtm=market_and_gtm,
+        solution_architecture=solution_architecture,
+        ai_architecture=ai_architecture,
+        security_architecture=security_architecture,
+        qa_evaluation=qa_evaluation,
+        revision_history=revision_history,
+    )
 
     selected_labels = [
         label for label, artifact in optional_artifacts.items() if artifact is not None
@@ -126,7 +129,7 @@ def create_lead_review_task(
         "Objective: Perform the final cross-specialist review of this "
         "BuildWise consultation and decide whether it is ready for blueprint "
         "assembly.\n\n"
-        "Available structured context:\n" + "\n".join(context_lines) + "\n\n"
+        "Available deterministic review index:\n" + review_index.model_dump_json() + "\n\n"
         f"Selected specialist artifacts included above: "
         f"{', '.join(selected_labels) or 'none'}.\n"
         f"Specialist artifacts not selected for this consultation (treat as "
